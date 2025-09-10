@@ -4,12 +4,12 @@
 #SBATCH --qos=short
 #SBATCH --time=4:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=8192
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=2048
 #SBATCH --mail-type=END
-#SBATCH --gres=gpu
-#SBATCH --output=data_preprocessing/%x-%j.out
-#SBATCH --error=data_preprocessing/%x-%j.err
+#SBATCH --gres=gpu:0
+#SBATCH --output=batch_scripts/data_sampler/%x-%j.out
+#SBATCH --error=batch_scripts/data_sampler/%x-%j.err
 
 module use /opt/insy/modulefiles
 module load cuda/10.0 cudnn/10.0-7.4.2.24
@@ -24,9 +24,9 @@ export PYTHONUNBUFFERED=1
 # --downsample_size: Image resize dimensions (default: 224 224)
 # --save_images: Flag to save downsampled images
 
-srun python data_preprocessing/data_sampler.py \
+srun python src/data_preprocessing/data_sampler.py \
     --unlabeled_sample_size 10000 \
     --random_seed 42 \
     --output_file data_table_sampled_10k.csv \
-    --downsample_size 224 224 \
-    --save_images 
+    --save_images True \
+    --clear_intermediate True

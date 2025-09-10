@@ -351,6 +351,7 @@ def load_dataloaders(
 
 
 if __name__ == "__main__":
+    print("Running plaque_dataset.py")
     from utils import load_config
 
     config = load_config("configs", "supervised")

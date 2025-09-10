@@ -19,9 +19,9 @@ def parse_arguments():
                        help="Output CSV file name (default: data_table_sampled.csv)")
     parser.add_argument("--label_file", type=str, default="labelfileidx.npz",
                        help="Label file name (default: labelfileidx.npz)")
-    parser.add_argument("--save_images", action="store_true", default= True,
+    parser.add_argument("--save_images", type=bool, default= True,
                        help="Save downsampled images to folders")
-    parser.add_argument("--clear_intermediate", action="store_true",
+    parser.add_argument("--clear_intermediate", type=bool, default=True,
                        help="Clear previous intermediate results (CSV and image folders) before running")
     parser.add_argument("--checkpoint_every", type=int, default=500,
                        help="Append checkpoint to CSV every N newly processed rows (default: 500)")
@@ -102,7 +102,7 @@ def create_data_table(data_folder, unlabeled_sample_size, label_file, random_see
 
     # Helper: checkpoint appender
     def append_rows_if_needed(force=False):
-        nonlocal rows
+        nonlocal rows, file_exists_pre
         if output_path is None:
             return
         if not rows:
@@ -113,7 +113,6 @@ def create_data_table(data_folder, unlabeled_sample_size, label_file, random_see
                 df_chunk = pd.DataFrame(rows, columns=["Image", "Index", "Roundness", "Area", "Label"])
                 df_chunk.to_csv(output_path, index=False, mode='a', header=(not file_exists_pre and write_header))
                 # After first write, we should not write headers again
-                nonlocal file_exists_pre
                 file_exists_pre = True
                 rows = []
             except Exception as e:
