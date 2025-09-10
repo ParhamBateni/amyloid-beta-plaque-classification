@@ -1,0 +1,27 @@
+{
+    "simple_cnn": {
+        "input_dim": 224,
+        "output_dim": 28,
+        "freeze_feature_extractor": false
+    },
+    "resnet18": {
+        "input_dim": 224,
+        "pretrained": true,
+        "freeze_feature_extractor": true
+    },
+    "resnet34": {
+        "input_dim": 224,
+        "pretrained": true,
+        "freeze_feature_extractor": true
+    },
+    "resnet50": {
+        "input_dim": 224,
+        "pretrained": true,
+        "freeze_feature_extractor": true
+    },
+    "resnet101": {
+        "input_dim": 224,
+        "pretrained": true,
+        "freeze_feature_extractor": true
+    }
+}

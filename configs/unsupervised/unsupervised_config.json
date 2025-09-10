@@ -1,0 +1,12 @@
+{
+    "feature_extractor": "simple_cnn",
+    "training": {
+        "num_epochs": 10,
+        "learning_rate": 0.001,
+        "random_seed": 42
+    },
+    "unsupervised": {
+        "latent_dim": 128,
+        "reconstruction_weight": 1.0
+    }
+}

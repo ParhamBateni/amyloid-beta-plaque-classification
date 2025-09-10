@@ -1,0 +1,33 @@
+{
+    "data": {
+        "data_folder": "data",
+        "data_table_file_name": "data_table_sampled_10k.csv",
+        "labeled_data_folder": "labeled_images_new",
+        "unlabeled_data_folder": "sampled_unlabeled_images",
+        "reports_folder": "reports",
+        "downscaled_image_size": [224, 224],
+        "unlabeled_sample_size": 2000,
+        "labeled_sample_size": 1e9,
+        "test_size": 0.2,
+        "val_size": 0.2,
+        "preload_data": true,
+        "apply_transforms_on_the_fly": false,
+        "transform_data": false,
+        "normalize_data": false,
+        "normalize_mean": [0.485, 0.456, 0.406],
+        "normalize_std": [0.229, 0.224, 0.225],
+        "use_extra_features": false,
+        "extra_feature_dim": 2,
+        "batch_size": 32,
+        "num_workers": 0,
+        "pin_memory": true,
+        "persistent_workers": false,
+        "pixels_scale": 255
+    },
+    "system": {
+        "debug_mode": true,
+        "log_mode": true,
+        "device": "cpu",
+        "random_seed": 42
+    }
+}

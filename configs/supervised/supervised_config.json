@@ -1,0 +1,11 @@
+{
+    "feature_extractor_name": "simple_cnn",
+    "classifier_name": "custom_mlp",
+    "training": {
+        "num_epochs": 50,
+        "learning_rate": 1e-5,
+        "weight_decay": 0.0,
+        "early_stop": 5,
+        "random_seed": 42
+    }
+}

@@ -1,0 +1,7 @@
+.venv
+.vscode
+.idea
+data
+run_logs
+run_reports
+__pycache__

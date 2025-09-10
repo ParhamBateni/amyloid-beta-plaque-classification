@@ -1,0 +1,12 @@
+{
+    "custom_mlp": {
+    },
+    "simple_mlp": {
+        "dropout_rate": 0.3,
+        "hidden_layers": [256]
+    },
+    "deep_mlp": {
+        "dropout_rate": 0.5,
+        "hidden_layers": [1024, 512, 256, 128]
+    }
+}

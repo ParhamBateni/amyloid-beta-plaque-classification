@@ -1,0 +1,11 @@
+sinteractive --cpus-per-task=2 --mem=8192 --gres=gpu
+alias slu='slurmtop | grep NETID'
+alias int='sinteractive --cpus-per-task=2 --mem=8G --gres=gpu --partition=general'
+
+
+sinteractive --ntasks=1 --cpus-per-task=2 --mem=8G --time=1:00:00 \
+  --hint=nomultithread --cpu-bind=cores --gres=gpu:0 \
+  --export=ALL,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1,NUMEXPR_NUM_THREADS=1
+
+
+rsync -avz --exclude='data/' pbateni@hpc:/tudelft.net/staff-umbrella/NightId/pbateni/pbt-plaque-analysis/ ./

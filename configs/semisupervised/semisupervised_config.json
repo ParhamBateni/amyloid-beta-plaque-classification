@@ -1,0 +1,14 @@
+{
+    "feature_extractor": "simple_cnn",
+    "classifier": "custom_mlp",
+    "training": {
+        "num_epochs": 10,
+        "learning_rate": 0.001,
+        "early_stop": 5,
+        "random_seed": 42
+    },
+    "semisupervised": {
+        "unlabeled_weight": 0.1,
+        "consistency_weight": 1.0
+    }
+}
