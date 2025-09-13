@@ -5,5 +5,5 @@
 /run_logs/
 /run_reports/
 __pycache__
-.out
-.err
+*.out
+*.err

@@ -10,15 +10,21 @@ from PIL import Image
 import shutil
 def parse_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default="data")
+    parser.add_argument("--data_folder", type=str, default="data")
+    parser.add_argument("--labeled_plaques_folder", type=str, default="labeled_plaques")
+    parser.add_argument("--unlabeled_plaques_folder", type=str, default="unlabeled_plaques")
     parser.add_argument("--unlabeled_sample_size", type=int, default=2000, 
-                       help="Number of unlabeled plaques to sample (default: 2000)")
+                       help="Number of unlabeled plaques to sample (default: 2000)"),
+    parser.add_argument("--labeled_result_folder", type=str, default="labeled_images"),
+    parser.add_argument("--unlabeled_result_folder", type=str, default="sampled_unlabeled_images"),
     parser.add_argument("--random_seed", type=int, default=42,
                        help="Random seed for reproducible sampling (default: 42)")
-    parser.add_argument("--output_file", type=str, default="data_table_sampled.csv",
+    parser.add_argument("--output_sampled_data_table_file", type=str, default="data_table_sampled.csv",
                        help="Output CSV file name (default: data_table_sampled.csv)")
     parser.add_argument("--label_file", type=str, default="labelfileidx.npz",
-                       help="Label file name (default: labelfileidx.npz)")
+                       help="Label file name (default: labelfileidx.npz)"),
+    parser.add_argument("--label_names_file", type=str, default="label_names.csv",
+                       help="Label names file name (default: label_names.csv)"),
     parser.add_argument("--save_images", type=bool, default= True,
                        help="Save downsampled images to folders")
     parser.add_argument("--clear_intermediate", type=bool, default=True,
@@ -27,14 +33,14 @@ def parse_arguments():
                        help="Append checkpoint to CSV every N newly processed rows (default: 500)")
     return parser.parse_args()
 
-def get_total_plaques_count(data_folder):
+def get_total_plaques_count(data_folder, unlabeled_folder):
     """Count total number of plaques across all files"""
-    files = os.listdir(os.path.join(data_folder, 'images'))
+    files = os.listdir(os.path.join(data_folder, unlabeled_folder))
     total_plaques = 0
     
     print("Counting total plaques...")
     for image in tqdm(files, desc="Counting plaques"):
-        file_path = os.path.join(data_folder, 'images', image)
+        file_path = os.path.join(data_folder, unlabeled_folder, image)
         try:
             with h5py.File(file_path, 'r') as f:
                 total_plaques += f['plaques'].attrs['length']
@@ -43,8 +49,8 @@ def get_total_plaques_count(data_folder):
     
     return total_plaques, files
 
-def create_data_table(data_folder, unlabeled_sample_size, label_file, random_seed=42, 
-                                            save_images=False, label_names_file=None,
+def create_data_table(data_folder, labeled_folder, unlabeled_folder, unlabeled_sample_size, label_file, random_seed=42, 
+                                            save_images=False, labeled_result_folder=None, unlabeled_result_folder=None, label_names_file=None,
                                             output_path=None, clear_intermediate=False,
                                             checkpoint_every=500):
     """Create data table with labeled samples from npz file and sampled unlabeled data, optionally saving images"""
@@ -62,20 +68,17 @@ def create_data_table(data_folder, unlabeled_sample_size, label_file, random_see
     
     # Create folders for images if saving
     if save_images:
-        labeled_folder = os.path.join(data_folder, "labeled_images")
-        unlabeled_folder = os.path.join(data_folder, "sampled_unlabeled_images")
-
         if clear_intermediate:
-            if os.path.exists(labeled_folder):
-                shutil.rmtree(labeled_folder)
-            if os.path.exists(unlabeled_folder):
-                shutil.rmtree(unlabeled_folder)
+            if os.path.exists(os.path.join(data_folder, labeled_folder)):
+                shutil.rmtree(os.path.join(data_folder, labeled_folder))
+            if os.path.exists(os.path.join(data_folder, unlabeled_folder)):
+                shutil.rmtree(os.path.join(data_folder, unlabeled_folder))
         # Ensure folders exist but do not clear unless requested
-        os.makedirs(labeled_folder, exist_ok=True)
-        os.makedirs(unlabeled_folder, exist_ok=True)
+        os.makedirs(os.path.join(data_folder, labeled_folder), exist_ok=True)
+        os.makedirs(os.path.join(data_folder, unlabeled_folder), exist_ok=True)
     
     # First, get total count and file list
-    total_plaques, files = get_total_plaques_count(data_folder)
+    total_plaques, files = get_total_plaques_count(data_folder, unlabeled_folder)
     print(f"Total plaques available: {total_plaques}")
     print(f"Unlabeled sample size: {unlabeled_sample_size}")
     
@@ -90,7 +93,7 @@ def create_data_table(data_folder, unlabeled_sample_size, label_file, random_see
         try:
             existing_df = pd.read_csv(output_path)
             for _, r in existing_df.iterrows():
-                processed_pairs.add((str(r["Image"]), str(r["Index"])))
+                processed_pairs.add((str(r["Image"]), str(r["Index"]), str(r["Label"])))
             # Count existing unlabeled (Label is NaN) and labeled (Label not NaN)
             if "Label" in existing_df.columns:
                 existing_unlabeled_count = existing_df["Label"].isna().sum()
@@ -124,10 +127,10 @@ def create_data_table(data_folder, unlabeled_sample_size, label_file, random_see
         with np.load(os.path.join(data_folder, label_file)) as f:
             for image, index, label in tqdm(zip(f['file_name'], f['local_idx'], f['label']), 
                                           total=len(f['file_name']), desc="Processing labeled samples"):
-                file_path = os.path.join(data_folder, 'images', image)
+                file_path = os.path.join(data_folder, labeled_folder, image)
                 try:
                     # Skip if already processed in previous run
-                    if (str(image), str(index)) in processed_pairs:
+                    if (str(image), str(index), str(label)) in processed_pairs:
                         continue
                     with h5py.File(file_path, 'r') as h5f:
                         plaque = h5f['plaques'][str(index)]
@@ -151,7 +154,7 @@ def create_data_table(data_folder, unlabeled_sample_size, label_file, random_see
                             else:
                                 class_name = f"class_{int(label)}"
                             
-                            image_folder_path = os.path.join(labeled_folder, class_name)
+                            image_folder_path = os.path.join(data_folder, labeled_result_folder, class_name)
                             if not os.path.exists(image_folder_path):
                                 os.makedirs(image_folder_path)
                             
@@ -180,17 +183,17 @@ def create_data_table(data_folder, unlabeled_sample_size, label_file, random_see
         print("Loop 2: Sampling unlabeled data...")
         
         # Extend processed pairs with newly added in this run
-        processed_pairs.update((row[0], row[1]) for row in rows)
+        processed_pairs.update((row[0], row[1], row[4]) for row in rows)
         
         # Create list of all available unlabeled pairs
         unlabeled_pairs = []
         for image in tqdm(files, desc="Collecting unlabeled pairs"):
-            file_path = os.path.join(data_folder, 'images', image)
+            file_path = os.path.join(data_folder, unlabeled_folder, image)
             try:
                 with h5py.File(file_path, 'r') as f:
                     length = f['plaques'].attrs['length']
                     for index in range(length):
-                        if (image, str(index)) not in processed_pairs:
+                        if (image, str(index), str(None)) not in processed_pairs:
                             unlabeled_pairs.append((image, str(index)))
             except Exception as e:
                 print(f"Error collecting unlabeled pairs from {image}: {e}")
@@ -212,7 +215,7 @@ def create_data_table(data_folder, unlabeled_sample_size, label_file, random_see
         
         # Add sampled unlabeled data
         for image, index in tqdm(sampled_unlabeled, desc="Processing unlabeled samples"):
-            file_path = os.path.join(data_folder, 'images', image)
+            file_path = os.path.join(data_folder, unlabeled_folder, image)
             try:
                 with h5py.File(file_path, 'r') as f:
                     plaque = f['plaques'][index]
@@ -231,7 +234,7 @@ def create_data_table(data_folder, unlabeled_sample_size, label_file, random_see
                     # Save image if requested
                     if save_images:
                         image_filename = f'{image.replace(".hdf5", "")}_index_{index}.png'
-                        image_file_path = os.path.join(unlabeled_folder, image_filename)
+                        image_file_path = os.path.join(data_folder, unlabeled_result_folder, image_filename)
                         
                         # Save image if it doesn't exist
                         if not os.path.exists(image_file_path):
@@ -256,8 +259,8 @@ def create_data_table(data_folder, unlabeled_sample_size, label_file, random_see
     
     if save_images:
         print(f"Images saved to:")
-        print(f"  Labeled: {labeled_folder}")
-        print(f"  Unlabeled: {unlabeled_folder}")
+        print(f"  Labeled: {data_folder}/{labeled_result_folder}")
+        print(f"  Unlabeled: {data_folder}/{unlabeled_result_folder}")
     
     return rows
 
@@ -266,25 +269,35 @@ def create_data_table(data_folder, unlabeled_sample_size, label_file, random_see
 
 def main():
     args = parse_arguments()
-    DATA_FOLDER = args.data_dir
+    DATA_FOLDER = args.data_folder
+    LABELED_PLAQUES_FOLDER = args.labeled_plaques_folder
+    UNLABELED_PLAQUES_FOLDER = args.unlabeled_plaques_folder
     UNLABELED_SAMPLE_SIZE = args.unlabeled_sample_size
     RANDOM_SEED = args.random_seed
-    OUTPUT_FILE = args.output_file
+    OUTPUT_SAMPLED_DATA_TABLE_FILE = args.output_sampled_data_table_file
     LABEL_FILE = args.label_file
+    LABEL_NAMES_FILE = args.label_names_file
+    LABELED_RESULT_FOLDER = args.labeled_result_folder
+    UNLABELED_RESULT_FOLDER = args.unlabeled_result_folder
     SAVE_IMAGES = args.save_images
     CLEAR_INTERMEDIATE = args.clear_intermediate
     CHECKPOINT_EVERY = args.checkpoint_every
     
     print(f"Starting sampled data table generation...")
     print(f"Data folder: {DATA_FOLDER}")
+    print(f"Labeled plaques folder: {LABELED_PLAQUES_FOLDER}")
+    print(f"Unlabeled plaques folder: {UNLABELED_PLAQUES_FOLDER}")
     print(f"Unlabeled sample size: {UNLABELED_SAMPLE_SIZE}")
     print(f"Random seed: {RANDOM_SEED}")
-    print(f"Output file: {OUTPUT_FILE}")
+    print(f"Output sampled data table file: {OUTPUT_SAMPLED_DATA_TABLE_FILE}")
+    print(f"Label names file: {LABEL_NAMES_FILE}")
+    print(f"Labeled result folder: {DATA_FOLDER}/{LABELED_RESULT_FOLDER}")
+    print(f"Unlabeled result folder: {DATA_FOLDER}/{UNLABELED_RESULT_FOLDER}")
     print(f"Save images: {SAVE_IMAGES}")
     print(f"Clear intermediate: {CLEAR_INTERMEDIATE}")
     print(f"Checkpoint every: {CHECKPOINT_EVERY}")
     
-    output_path = os.path.join(DATA_FOLDER, OUTPUT_FILE)
+    output_path = os.path.join(DATA_FOLDER, OUTPUT_SAMPLED_DATA_TABLE_FILE)
     # Clear previous CSV if requested
     if CLEAR_INTERMEDIATE and os.path.exists(output_path):
         try:
@@ -296,11 +309,15 @@ def main():
     # Create data table with labeled and unlabeled samples (and save images if requested)
     rows = create_data_table(
         DATA_FOLDER, 
+        LABELED_PLAQUES_FOLDER,
+        UNLABELED_PLAQUES_FOLDER,
         UNLABELED_SAMPLE_SIZE, 
         LABEL_FILE, 
         RANDOM_SEED,
         save_images=SAVE_IMAGES,
-        label_names_file="label_names.csv",
+        labeled_result_folder=LABELED_RESULT_FOLDER,
+        unlabeled_result_folder=UNLABELED_RESULT_FOLDER,
+        label_names_file=LABEL_NAMES_FILE,
         output_path=output_path,
         clear_intermediate=CLEAR_INTERMEDIATE,
         checkpoint_every=CHECKPOINT_EVERY

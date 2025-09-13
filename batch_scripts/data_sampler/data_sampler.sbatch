@@ -25,8 +25,16 @@ export PYTHONUNBUFFERED=1
 # --save_images: Flag to save downsampled images
 
 srun python src/data_preprocessing/data_sampler.py \
+    --data_folder data \
+    --labeled_plaques_folder labeled_plaques \
+    --unlabeled_plaques_folder unlabeled_plaques \
+    --labeled_result_folder labeled_images \
+    --unlabeled_result_folder sampled_unlabeled_images \
     --unlabeled_sample_size 10000 \
     --random_seed 42 \
-    --output_file data_table_sampled_10k.csv \
+    --output_sampled_data_table_file data_table_sampled_10k.csv \
+    --label_file labelfileidx.npz \
+    --label_names_file label_names.csv \
     --save_images True \
-    --clear_intermediate True
+    --clear_intermediate True \
+    --checkpoint_every 500
