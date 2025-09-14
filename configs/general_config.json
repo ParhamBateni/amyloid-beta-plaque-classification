@@ -2,10 +2,11 @@
     "data": {
         "data_folder": "data",
         "data_table_file_name": "data_table_sampled_10k.csv",
-        "labeled_data_folder": "labeled_images_new",
+        "labeled_data_folder": "labeled_images",
         "unlabeled_data_folder": "sampled_unlabeled_images",
         "reports_folder": "reports",
         "downscaled_image_size": [224, 224],
+        "downscaling_method": "bilinear",
         "unlabeled_sample_size": 2000,
         "labeled_sample_size": 1e9,
         "test_size": 0.2,
@@ -27,7 +28,15 @@
     "system": {
         "debug_mode": true,
         "log_mode": true,
-        "device": "cpu",
         "random_seed": 42
+    },
+    "cv_grid_search": {
+        "data": {
+            "downscaled_image_size": [[448, 448], [224, 224], [112, 112]],
+            "downscaling_method": ["bilinear", "bicubic", "nearest"],
+            "pixels_scale": [1, 255],
+            "batch_size": [32, 64, 128],
+            "use_extra_features": [true, false]
+        }
     }
 }

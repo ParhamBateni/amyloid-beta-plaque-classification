@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 import torch
 import torch.nn as nn
-from typing import Tuple, Optional, Dict, Any
 
 class BaseClassifier(ABC, nn.Module):
     """
@@ -53,3 +52,18 @@ class BaseClassifier(ABC, nn.Module):
         import pickle
         with open(path, 'rb') as f:
             return pickle.load(f)
+
+def create_classifier(classifier_name: str, input_dim: int, num_classes: int, classifier_config: dict) -> BaseClassifier:
+    full_cfg = {"input_dim": input_dim, "num_classes": num_classes, **classifier_config}
+    if classifier_name == "custom_mlp":
+        from .custom_mlp_classifier import CustomMLPClassifier
+        return CustomMLPClassifier(**full_cfg)
+    elif classifier_name == "simple_mlp":
+        from .simple_mlp_classifier import SimpleMLPClassifier
+        return SimpleMLPClassifier(**full_cfg)
+    elif classifier_name == "deep_mlp":
+        from .deep_mlp_classifier import DeepMLPClassifier
+        return DeepMLPClassifier(**full_cfg)
+    # TODO: Add more classifiers
+    else:
+        raise ValueError(f"Classifier {classifier_name} not found")

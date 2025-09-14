@@ -1,27 +1,41 @@
 {
     "simple_cnn": {
-        "input_dim": 224,
         "output_dim": 28,
-        "freeze_feature_extractor": false
+        "freeze_feature_extractor": false,
+        "grid_search":{
+            "output_dim": [28, 56, 112]
+        }
     },
     "resnet18": {
-        "input_dim": 224,
+        "output_dim": 28,
         "pretrained": true,
-        "freeze_feature_extractor": true
+        "freeze_feature_extractor": true,
+        "grid_search":{
+            "output_dim": [28, 56, 112]
+        }
     },
     "resnet34": {
-        "input_dim": 224,
+        "output_dim": 28,
         "pretrained": true,
-        "freeze_feature_extractor": true
+        "freeze_feature_extractor": true,
+        "cv_grid_search":{
+            "output_dim": [28, 56, 112]
+        }
     },
     "resnet50": {
-        "input_dim": 224,
+        "output_dim": 28,
         "pretrained": true,
-        "freeze_feature_extractor": true
+        "freeze_feature_extractor": true,
+        "cv_grid_search":{
+            "output_dim": [28, 56, 112]
+        }
     },
     "resnet101": {
-        "input_dim": 224,
+        "output_dim": 28,
         "pretrained": true,
-        "freeze_feature_extractor": true
+        "freeze_feature_extractor": true,
+        "cv_grid_search":{
+            "output_dim": [28, 56, 112]
+        }
     }
 }
