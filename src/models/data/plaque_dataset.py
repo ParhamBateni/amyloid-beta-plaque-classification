@@ -11,9 +11,6 @@ from sklearn.model_selection import train_test_split
 from models.config import Config
 from typing import List
 import matplotlib.pyplot as plt
-from utils import print_log
-import numpy as np
-
 from torchvision.transforms.functional import to_pil_image
 
 
@@ -34,6 +31,7 @@ class PlaqueDataset(torch.utils.data.Dataset):
         use_extra_features: bool = False,
         pixels_scale: int = 255,
         downscaled_image_size: Tuple[int, int] = (224, 224),
+        downscaling_method: str = "bilinear",
     ):
         self.data_df = data_df
         self.data_folder_path = data_folder_path
@@ -62,6 +60,7 @@ class PlaqueDataset(torch.utils.data.Dataset):
             normalize_std.clone().detach() if normalize_std is not None else None
         )
         self.downscaled_image_size = downscaled_image_size
+        self.downscaling_method = downscaling_method
         self.use_extra_features = use_extra_features
         self.pixels_scale = pixels_scale
         self._preloaded_data = None
@@ -132,7 +131,13 @@ class PlaqueDataset(torch.utils.data.Dataset):
             row["Label"] if pd.notna(row["Label"]) else "",
             f"{row['Image'].replace('.hdf5', '')}_index_{row['Index']}.png",
         )
-        raw_image_pil = Image.open(image_path).convert("RGB").resize(self.downscaled_image_size, Image.BILINEAR)
+
+        if self.downscaling_method == "bilinear":
+            raw_image_pil = Image.open(image_path).convert("RGB").resize(self.downscaled_image_size, Image.BILINEAR)
+        elif self.downscaling_method == "nearest":
+            raw_image_pil = Image.open(image_path).convert("RGB").resize(self.downscaled_image_size, Image.NEAREST)
+        else:
+            raise ValueError(f"Invalid downscaling method: {self.downscaling_method}. It should be either 'bilinear' or 'nearest'.")
         raw_image_tensor = transforms.ToTensor()(raw_image_pil)
         # Ensure transform receives the correct input type (Tensor or PIL as expected)
         if self.transform and apply_transform:
@@ -170,52 +175,13 @@ class PlaqueDataset(torch.utils.data.Dataset):
         return (image_tensor - mean) / std
 
 
-# Load dataloaders
-def load_dataloaders(
-    config: Config,
-) -> List[torch.utils.data.DataLoader]:
-    data_df = pd.read_csv(
-        os.path.join(
-            config.general_config.data.data_folder,
-            config.general_config.data.data_table_file_name,
-        )
-    )
-    labeled_data_df = data_df[data_df["Label"].notna()]
-    labeled_data_df = labeled_data_df.sample(
-        n=min(config.general_config.data.labeled_sample_size, len(labeled_data_df)),
-        random_state=config.general_config.system.random_seed,
-        replace=False,
-    )
-    unlabeled_data_df = data_df[data_df["Label"].isna()]
-    unlabeled_data_df = unlabeled_data_df.sample(
-        n=min(
-            config.general_config.data.unlabeled_sample_size,
-            len(unlabeled_data_df),
-        ),
-        random_state=config.general_config.system.random_seed,
-        replace=False,
-    )
-
+def load_labeled_dataloaders(train_labeled_data_df: pd.DataFrame, test_labeled_data_df: pd.DataFrame, val_labeled_data_df: pd.DataFrame, config: Config) -> List[torch.utils.data.DataLoader]:
     normalize_mean = torch.tensor(
         config.general_config.data.normalize_mean, dtype=torch.float32
     )
     normalize_std = torch.tensor(
         config.general_config.data.normalize_std, dtype=torch.float32
     )
-
-    train_labeled_data_df, test_labeled_data_df = train_test_split(
-        labeled_data_df,
-        test_size=config.general_config.data.test_size,
-        random_state=config.general_config.system.random_seed,
-        stratify=labeled_data_df["Label"],
-    )
-    train_labeled_data_df, val_labeled_data_df = train_test_split(
-        train_labeled_data_df,
-        test_size=config.general_config.data.val_size,
-        random_state=config.general_config.system.random_seed,
-        stratify=train_labeled_data_df["Label"],
-    )
-
     # Augmentations only; normalization is applied inside the dataset and returned separately
     labeled_train_transform = transforms.Compose(
         [
@@ -238,11 +204,10 @@ def load_dataloaders(
             transforms.ToTensor()
         ]
     )
-
     labeled_data_folder_path = os.path.join(
         config.general_config.data.data_folder,
         config.general_config.data.labeled_data_folder,
-    )
+    ) 
     train_labeled_dataset = PlaqueDataset(
         train_labeled_data_df,
         labeled_data_folder_path,
@@ -250,13 +215,14 @@ def load_dataloaders(
         transform=labeled_train_transform if config.general_config.data.transform_data else None,
         preload=config.general_config.data.preload_data,
         apply_transforms_on_the_fly=config.general_config.data.apply_transforms_on_the_fly,
-        description="labeled plaque images",
+        description="train labeled plaque images",
         normalize_data=config.general_config.data.normalize_data,
         normalize_mean=normalize_mean,
         normalize_std=normalize_std,
         use_extra_features=config.general_config.data.use_extra_features,
         pixels_scale=config.general_config.data.pixels_scale,
         downscaled_image_size=config.general_config.data.downscaled_image_size,
+        downscaling_method=config.general_config.data.downscaling_method,
     )
     test_labeled_dataset = PlaqueDataset(
         test_labeled_data_df,
@@ -272,6 +238,7 @@ def load_dataloaders(
         use_extra_features=config.general_config.data.use_extra_features,
         pixels_scale=config.general_config.data.pixels_scale,
         downscaled_image_size=config.general_config.data.downscaled_image_size,
+        downscaling_method=config.general_config.data.downscaling_method,
     )
     val_labeled_dataset = PlaqueDataset(
         val_labeled_data_df,
@@ -287,6 +254,7 @@ def load_dataloaders(
         use_extra_features=config.general_config.data.use_extra_features,
         pixels_scale=config.general_config.data.pixels_scale,
         downscaled_image_size=config.general_config.data.downscaled_image_size,
+        downscaling_method=config.general_config.data.downscaling_method,
     )
 
     train_labeled_dataloader = torch.utils.data.DataLoader(
@@ -313,7 +281,32 @@ def load_dataloaders(
         pin_memory=config.general_config.data.pin_memory,
         persistent_workers=config.general_config.data.persistent_workers,
     )
+    return (
+        train_labeled_dataloader,
+        val_labeled_dataloader,
+        test_labeled_dataloader,
+    )
 
+def load_unlabeled_dataloader(unlabeled_data_df: pd.DataFrame, config: Config) -> torch.utils.data.DataLoader:
+    if unlabeled_data_df is None:
+        return None
+    normalize_mean = torch.tensor(
+        config.general_config.data.normalize_mean, dtype=torch.float32
+    )
+    normalize_std = torch.tensor(
+        config.general_config.data.normalize_std, dtype=torch.float32
+    )
+    unlabeled_transform = transforms.Compose(
+        [
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomVerticalFlip(p=0.5),
+            transforms.RandomRotation(degrees=(0, 90)),  # RandomRotate90
+            transforms.ColorJitter(
+                brightness=0.2, contrast=0.2
+            ),  # RandomBrightnessContrast
+            transforms.ToTensor(),
+        ]
+    )
     unlabeled_data_folder_path = os.path.join(
         config.general_config.data.data_folder,
         config.general_config.data.unlabeled_data_folder,
@@ -322,7 +315,7 @@ def load_dataloaders(
         unlabeled_data_df,
         unlabeled_data_folder_path,
         name_to_label=config.name_to_label,
-        transform=labeled_val_transform if config.general_config.data.transform_data else None,
+        transform=unlabeled_transform if config.general_config.data.transform_data else None,
         preload=config.general_config.data.preload_data,
         apply_transforms_on_the_fly=config.general_config.data.apply_transforms_on_the_fly,
         description="unlabeled plaque images",
@@ -332,6 +325,7 @@ def load_dataloaders(
         use_extra_features=config.general_config.data.use_extra_features,
         pixels_scale=config.general_config.data.pixels_scale,
         downscaled_image_size=config.general_config.data.downscaled_image_size,
+        downscaling_method=config.general_config.data.downscaling_method,
     )
     unlabeled_dataloader = torch.utils.data.DataLoader(
         unlabeled_dataset,
@@ -341,26 +335,39 @@ def load_dataloaders(
         pin_memory=config.general_config.data.pin_memory,
         persistent_workers=config.general_config.data.persistent_workers,
     )
+    return unlabeled_dataloader
 
-    return (
-        train_labeled_dataloader,
-        val_labeled_dataloader,
-        test_labeled_dataloader,
-        unlabeled_dataloader,
-    )
 
 
 if __name__ == "__main__":
     print("Running plaque_dataset.py")
-    from utils import load_config
-
-    config = load_config("configs", "supervised")
+    from utils import load_data_df
+    config = Config.load_config("configs")
+    
+    labeled_data_df, unlabeled_data_df = load_data_df("supervised", config)
+    print("labeled_data_df shape: ", labeled_data_df.shape)
+    print("unlabeled_data_df shape: ", unlabeled_data_df.shape)
+    train_labeled_data_df, test_labeled_data_df = train_test_split(
+        labeled_data_df,
+        test_size=config.general_config.data.val_size,
+        random_state=config.general_config.system.random_seed,
+    )
+    train_labeled_data_df, val_labeled_data_df = train_test_split(
+        train_labeled_data_df,
+        test_size=config.general_config.data.test_size,
+        random_state=config.general_config.system.random_seed,
+    )
+    print("train_labeled_data_df shape: ", train_labeled_data_df.shape)
+    print("test_labeled_data_df shape: ", test_labeled_data_df.shape)
+    print("val_labeled_data_df shape: ", val_labeled_data_df.shape)
     (
         train_labeled_dataloader,
         val_labeled_dataloader,
         test_labeled_dataloader,
-        unlabeled_dataloader,
-    ) = load_dataloaders(config)
+    ) = load_labeled_dataloaders(train_labeled_data_df, test_labeled_data_df, val_labeled_data_df, config)
+    unlabeled_dataloader = load_unlabeled_dataloader(unlabeled_data_df, config)
+    
+    
     print("train_labeled_dataloader number of batches: ", len(train_labeled_dataloader))
     print("val_labeled_dataloader number of batches: ", len(val_labeled_dataloader))
     print("test_labeled_dataloader number of batches: ", len(test_labeled_dataloader))

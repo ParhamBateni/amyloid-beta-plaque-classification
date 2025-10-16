@@ -7,5 +7,15 @@
         "weight_decay": 0.0,
         "early_stop": 5,
         "random_seed": 42
+    },
+    "cv_grid_search": {
+        "feature_extractor_name": ["simple_cnn", "resnet18", "resnet34"],
+        "classifier_name": ["custom_mlp", "deep_mlp"],
+        "training": {
+            "num_epochs": [50, 100, 150],
+            "learning_rate": [1e-6, 1e-5, 1e-4],
+            "weight_decay": [0.0, 0.001, 0.1],
+            "early_stop": [5, 10]
+        }
     }
 }

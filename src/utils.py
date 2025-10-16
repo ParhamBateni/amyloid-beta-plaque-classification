@@ -1,10 +1,11 @@
 import os
-import json
 from models.config import Config
 import pandas as pd
-from datetime import datetime
+from typing import Tuple, Any
+import numpy as np
+import matplotlib.pyplot as plt
 
-    # # Set default tensor type to float32 to avoid CUDA double precision issues
+# # Set default tensor type to float32 to avoid CUDA double precision issues
 # torch.set_default_dtype(torch.float32)
 # # Force all new tensors to be float32
 # torch.set_default_device(torch.device("cpu"))  # This helps ensure float32
@@ -18,58 +19,96 @@ from datetime import datetime
 #     tqdm.miniters = 1
 
 
-def load_config(config_dir: str, train_mode: str) -> Config:
-    def load_config_directory(config_dir: str) -> Config:
-        """Load all configuration files."""
-        configs = {}
-        # Load mode-specific configs
-        if os.path.exists(config_dir):
-            for file in os.listdir(config_dir):
-                file_name = file.split(".")[0]
-                if os.path.isfile(os.path.join(config_dir, file)) and file.endswith(".json"):
-                    with open(os.path.join(config_dir, file), "r", encoding="utf-8") as f:
-                        config = Config(json.load(f))
-                elif os.path.isdir(os.path.join(config_dir, file)):
-                    config = load_config_directory(os.path.join(config_dir, file))
-                configs[file_name] = config
-            return Config(configs)
-        else:
-            raise FileNotFoundError(f"Config directory {config_dir} not found")
-    config = load_config_directory(config_dir)
+def load_data_df(train_mode: str, config: Config) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    data_df = pd.read_csv(
+        os.path.join(
+            config.general_config.data.data_folder,
+            config.general_config.data.data_table_file_name,
+        )
+    )
+    labeled_data_df = data_df[data_df["Label"].notna()]
+    labeled_data_df = labeled_data_df.sample(
+        n=min(config.general_config.data.labeled_sample_size, len(labeled_data_df)),
+        random_state=config.general_config.system.random_seed,
+        replace=False,
+    )
+    if train_mode != "supervised":
+        unlabeled_data_df = data_df[data_df["Label"].isna()]
+        unlabeled_data_df = unlabeled_data_df.sample(
+            n=min(config.general_config.data.unlabeled_sample_size, len(unlabeled_data_df)),
+            random_state=config.general_config.system.random_seed,
+            replace=False,
+        )
+        return labeled_data_df, unlabeled_data_df
+    else:
+        return labeled_data_df, None
 
-    # Global variables for label mappings (these don't need to be passed as args)
-    label_to_name = {}
-    name_to_label = {}
-    # Load label names
-    for i, r in pd.read_csv(
-        f"{config.general_config.data.data_folder}/label_names.csv"
-    ).iterrows():
-        label_to_name[r["Value"]] = r["Name"]
-        name_to_label[r["Name"]] = r["Value"]
-
-    # Add label mappings to args
-    config.label_to_name = label_to_name
-    config.name_to_label = name_to_label
-
-    config.run_id = os.environ.get('SLURM_JOB_ID')
-    if not config.run_id:
-        config.run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    # Filter the config based on the train mode
-    if train_mode == "supervised":
-        del config.unsupervised
-        del config.semisupervised
-        config.supervised.supervised_config.feature_extractor = config.supervised.feature_extractors_config[config.supervised.supervised_config.feature_extractor_name].to_dict()
-        config.supervised.supervised_config.classifier = config.supervised.classifiers_config[config.supervised.supervised_config.classifier_name].to_dict()
-    elif train_mode == "unsupervised":
-        del config.supervised
-        del config.semisupervised
-    elif train_mode == "semisupervised":
-        del config.supervised
-        del config.unsupervised
-    return config
 
 # Print log
-def print_log(message: str, log_mode: bool = True, *args, **kwargs):
+def print_log(message: str, log_folder: str = None, log_mode: bool = True, *args, **kwargs):
     if log_mode:
         print(message, *args, **kwargs)
+        if log_folder:
+            with open(os.path.join(log_folder, "log.txt"), "a") as f:
+                f.write(message + "\n")
+
+def save_loss_and_accuracy(train_losses: list[Any], val_losses: list[Any], train_accuracies: list[Any], val_accuracies: list[Any], folder_path: str):
+    averaged = False
+    if isinstance(train_losses[0], list):
+        train_losses = np.mean(np.array(train_losses), axis=0)
+        val_losses = np.mean(np.array(val_losses), axis=0)
+        train_accuracies = np.mean(np.array(train_accuracies), axis=0)
+        val_accuracies = np.mean(np.array(val_accuracies), axis=0)
+        averaged = True
+
+    # Convert all values to plain Python floats for clean output
+    def to_float_list(arr):
+        return [float(x) for x in arr]
+
+    train_losses_list = to_float_list(train_losses)
+    val_losses_list = to_float_list(val_losses)
+    train_accuracies_list = to_float_list(train_accuracies)
+    val_accuracies_list = to_float_list(val_accuracies)
+
+    with open(os.path.join(folder_path, "train_val_training_report.txt"), "w") as f:
+        f.write(f"{'Averaged ' if averaged else ''}Train Losses: {train_losses_list}\n")
+        f.write(f"{'Averaged ' if averaged else ''}Val Losses: {val_losses_list}\n")
+        f.write(f"{'Averaged ' if averaged else ''}Train Accuracies: {train_accuracies_list}\n")
+        f.write(f"{'Averaged ' if averaged else ''}Val Accuracies: {val_accuracies_list}\n")
+
+
+def plot_loss_and_accuracy(train_losses: list[Any], val_losses: list[Any], train_accuracies: list[Any], val_accuracies: list[Any], folder_path: str, save: bool = True):
+    averaged = False
+    if isinstance(train_losses[0], list):
+        train_losses = np.mean(np.array(train_losses), axis=0)
+        val_losses = np.mean(np.array(val_losses), axis=0)
+        train_accuracies = np.mean(np.array(train_accuracies), axis=0)
+        val_accuracies = np.mean(np.array(val_accuracies), axis=0)
+        averaged = True
+
+    # Plot Losses
+    plt.figure(figsize=(10, 5))
+    plt.plot(train_losses, label=f"{'Averaged ' if averaged else ''}Train Loss")
+    plt.plot(val_losses, label=f"{'Averaged ' if averaged else ''}Val Loss")
+    plt.legend()
+    plt.title(f"{'Averaged ' if averaged else ''}Train and Val Loss Over Epochs")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    if save:
+        plt.savefig(os.path.join(folder_path, "train_val_loss.png"))
+    plt.show()
+    plt.close()
+
+    # Plot Accuracies
+    plt.figure(figsize=(10, 5))
+    plt.plot(train_accuracies, label=f"{'Averaged ' if averaged else ''}Train Accuracy")
+    plt.plot(val_accuracies, label=f"{'Averaged ' if averaged else ''}Val Accuracy")
+    plt.legend()
+    plt.title(f"{'Averaged ' if averaged else ''}Train and Val Accuracy Over Epochs")
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy (%)")
+    plt.ylim(0, 100)
+    if save:
+        plt.savefig(os.path.join(folder_path, "train_val_accuracy.png"))
+    plt.show()
+    plt.close()

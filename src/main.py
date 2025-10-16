@@ -1,51 +1,115 @@
+import os
 import pandas as pd
 import torch
-import os
 import argparse
-from datetime import datetime
-from models.data.plaque_dataset import load_dataloaders
-from utils import print_log, load_config
-from report import generate_model_report
-import torch.nn as nn
+import numpy as np
+from models.data.plaque_dataset import (
+    load_labeled_dataloaders,
+    load_unlabeled_dataloader,
+)
+from utils import print_log, load_data_df, plot_loss_and_accuracy, save_loss_and_accuracy
+from report import (
+    generate_classification_report_df,
+    save_classification_report,
+    aggregate_classification_reports,
+)
+
 # Import the new modular models
+from models.base_model import BaseModel
 from models.supervised.supervised_model import SupervisedModel
 from models.config import Config
+from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import train_test_split
 
 
-def run_supervised_experiment(
+def cross_validate(
+    model: BaseModel,
+    labeled_data_df: pd.DataFrame,
+    unlabeled_data_df: pd.DataFrame,
+    config: Config,
+) -> tuple[tuple[list[list[float]], list[list[float]], list[list[float]], list[list[float]]], pd.DataFrame]:
+    """Cross-validate the model."""
+    kfold = StratifiedKFold(
+        n_splits=100 // config.general_config.data.test_size,
+        shuffle=True,
+        random_state=config.general_config.system.random_seed,
+    )
+    fold_train_losses, fold_val_losses, fold_train_accuracies, fold_val_accuracies = [], [], [], []
+    classification_report_dfs = []
+    for fold_idx, (train_idx, test_idx) in enumerate(
+        kfold.split(labeled_data_df, labeled_data_df["label"])
+    ):
+        labeled_test_data_df = labeled_data_df.iloc[test_idx]
+        labeled_train_val_data_df = labeled_data_df.iloc[train_idx]
+        train_data_df, val_data_df = train_test_split(
+            labeled_train_val_data_df,
+            test_size=config.general_config.data.val_size,
+            random_state=config.general_config.system.random_seed,
+        )
+        labeled_train_dataloader, labeled_val_dataloader, labeled_test_dataloader = load_labeled_dataloaders(
+            train_data_df, val_data_df, labeled_test_data_df, config
+        )
+        unlabeled_dataloader = load_unlabeled_dataloader(unlabeled_data_df, config)
+
+        train_losses, val_losses, train_accuracies, val_accuracies = model.fit(
+            labeled_train_dataloader, labeled_val_dataloader, unlabeled_dataloader=unlabeled_dataloader
+        )
+        fold_train_losses.append(train_losses)
+        fold_val_losses.append(val_losses)
+        fold_train_accuracies.append(train_accuracies)
+        fold_val_accuracies.append(val_accuracies)
+
+        labels, preds = model.predict(labeled_test_dataloader)
+
+        classification_report_df = generate_classification_report_df(
+            labels, preds, config.label_to_name.values()
+        )
+        classification_report_dfs.append(classification_report_df)
+
+        print_log(
+            f"Classification report for fold {fold_idx}",
+            log_mode=config.general_config.system.log_mode,
+        )
+        print_log(
+            classification_report_df, log_mode=config.general_config.system.log_mode
+        )
+
+    print_log(
+        "Aggregating classification reports",
+        log_mode=config.general_config.system.log_mode,
+    )
+    aggregated_classification_report_df = aggregate_classification_reports(
+        classification_report_dfs
+    )
+    return aggregated_classification_report_df
+
+
+def run_single_experiment(
+    model: BaseModel,
     train_labeled_dataloader: torch.utils.data.DataLoader,
     val_labeled_dataloader: torch.utils.data.DataLoader,
     test_labeled_dataloader: torch.utils.data.DataLoader,
+    unlabeled_dataloader: torch.utils.data.DataLoader,
     config: Config,
-):
+) -> tuple[tuple[list[float], list[float], list[float], list[float]], pd.DataFrame]:
     """Run the supervised learning experiment."""
-    # Create the supervised model with config-based parameters
-    supervised_model = SupervisedModel(
-        config=config,
-    )
-
-    print_log(
-        f"Using device: {config.general_config.system.device}",
-        log_mode=config.general_config.system.log_mode,
-    )
-    print_log(
-        f"Model: {supervised_model}", log_mode=config.general_config.system.log_mode
-    )
-
     # Train and test via model methods
-    supervised_model.train_model(
+    train_losses, val_losses, train_accuracies, val_accuracies = model.fit(
         train_labeled_dataloader,
         val_labeled_dataloader,
+        unlabeled_dataloader,
     )
 
-    all_labels, all_preds = supervised_model.test_model(
+    all_labels, all_preds = model.predict(
         test_labeled_dataloader,
     )
 
-    # Generate report
     label_names = [config.label_to_name[i] for i in sorted(config.label_to_name.keys())]
-    model_name = f"{config.supervised.supervised_config.feature_extractor_name}_{config.supervised.supervised_config.classifier_name}"
-    generate_model_report(all_labels, all_preds, label_names, model_name, config)
+    classification_report_df = generate_classification_report_df(
+        all_labels, all_preds, label_names
+    )
+    return (train_losses, val_losses, train_accuracies, val_accuracies), classification_report_df
+
 
 
 if __name__ == "__main__":
@@ -65,11 +129,18 @@ if __name__ == "__main__":
         choices=["supervised", "semisupervised", "unsupervised"],
         help="Training mode to use",
     )
+    parser.add_argument(
+        "--run_mode",
+        type=str,
+        default="single",
+        choices=["single", "cross_validate", "optimize_hyperparameters"],
+        help="Run mode to use",
+    )
     # Parse arguments
     args = parser.parse_args()
 
     # Load and merge configurations
-    config = load_config(args.config_dir, args.train_mode)
+    config = Config.load_config(args.config_dir, args.train_mode)
 
     print_log(
         "Config: " + str(config),
@@ -77,37 +148,85 @@ if __name__ == "__main__":
         end="\n\n",
     )
 
-    # # Load dataloaders
-    (
-        train_labeled_dataloader,
-        val_labeled_dataloader,
-        test_labeled_dataloader,
-        unlabeled_dataloader,
-    ) = load_dataloaders(config)
+    model = None
+    if args.train_mode == "supervised":
+        model = SupervisedModel(
+            config=config,
+        )
+    elif args.train_mode == "semisupervised":
+        pass
+    elif args.train_mode == "unsupervised":
+        pass
+    else:
+        raise ValueError(f"Invalid train mode: {args.train_mode}")
 
-    print_log(
-        "train_labeled_dataloader number of batches: "
-        + str(len(train_labeled_dataloader)),
-        log_mode=config.general_config.system.log_mode,
-    )
-    print_log(
-        "val_labeled_dataloader number of batches: " + str(len(val_labeled_dataloader)),
-        log_mode=config.general_config.system.log_mode,
-    )
-    print_log(
-        "test_labeled_dataloader number of batches: "
-        + str(len(test_labeled_dataloader)),
-        log_mode=config.general_config.system.log_mode,
-    )
-    print_log(
-        "unlabeled_dataloader number of batches: " + str(len(unlabeled_dataloader)),
-        log_mode=config.general_config.system.log_mode,
-    )
+    run_report_folder = os.path.join(config.general_config.data.reports_folder, f"{model.get_name()}_run_{config.run_id}")
+    os.makedirs(run_report_folder, exist_ok=True)
+    config.save_config(folder_path=run_report_folder)
+    labeled_data_df, unlabeled_data_df = load_data_df(args.train_mode, config)
 
-    # # Run the experiment
-    run_supervised_experiment(
-        train_labeled_dataloader,
-        val_labeled_dataloader,
-        test_labeled_dataloader,
-        config,
+    train_losses, val_losses, train_accuracies, val_accuracies = None, None, None, None
+    classification_report_df = None
+    if args.run_mode == "single":
+        train_labeled_data_df, test_labeled_data_df = train_test_split(
+            labeled_data_df,
+            test_size=config.general_config.data.val_size,
+            random_state=config.general_config.system.random_seed,
+        )
+        train_labeled_data_df, val_labeled_data_df = train_test_split(
+            train_labeled_data_df,
+            test_size=config.general_config.data.test_size,
+            random_state=config.general_config.system.random_seed,
+        )
+        train_labeled_dataloader, val_labeled_dataloader, test_labeled_dataloader = (
+            load_labeled_dataloaders(
+                train_labeled_data_df, val_labeled_data_df, test_labeled_data_df, config
+            )
+        )
+        unlabeled_dataloader = load_unlabeled_dataloader(unlabeled_data_df, config)
+        # # Run the experiment
+        (train_losses, val_losses, train_accuracies, val_accuracies), classification_report_df = run_single_experiment(
+            model,
+            train_labeled_dataloader,
+            val_labeled_dataloader,
+            test_labeled_dataloader,
+            unlabeled_dataloader,
+            config,
+        )
+        save_loss_and_accuracy(train_losses, val_losses, train_accuracies, val_accuracies, folder_path=run_report_folder)
+        plot_loss_and_accuracy(train_losses, val_losses, train_accuracies, val_accuracies, folder_path=run_report_folder, save=True)
+    elif args.run_mode == "cross_validate":
+        (fold_train_losses, fold_val_losses, fold_train_accuracies, fold_val_accuracies), classification_report_df = cross_validate(
+            model,
+            labeled_data_df,
+            unlabeled_data_df,
+            config,
+        )
+        save_loss_and_accuracy(fold_train_losses, fold_val_losses, fold_train_accuracies, fold_val_accuracies, folder_path=run_report_folder)
+        avg_train_losses = np.mean(np.array(fold_train_losses), axis=0)
+        avg_val_losses = np.mean(np.array(fold_val_losses), axis=0)
+        avg_train_accuracies = np.mean(np.array(fold_train_accuracies), axis=0)
+        avg_val_accuracies = np.mean(np.array(fold_val_accuracies), axis=0)
+        plot_loss_and_accuracy(avg_train_losses, avg_val_losses, avg_train_accuracies, avg_val_accuracies, folder_path=run_report_folder, save=True)
+    elif args.run_mode == "cross_validate_with_hyperparameters":
+        # optimize_hyperparameters(
+        #     model,
+        #     labeled_data_df,
+        #     unlabeled_data_df,
+        #     config,
+        # )
+        pass
+    else:
+        raise ValueError(f"Invalid run mode: {args.run_mode}")
+    
+    print_log(
+        "Saving model",
+        log_mode=config.general_config.system.log_mode,
     )
+    model.save_model(run_report_folder)
+    print_log(
+        "Saving classification report",
+        log_mode=config.general_config.system.log_mode,
+    )
+    print_log(classification_report_df, log_mode=config.general_config.system.log_mode)
+    save_classification_report(classification_report_df, run_report_folder)
