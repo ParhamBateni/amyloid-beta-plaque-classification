@@ -1,7 +1,7 @@
 import os
-from models.config import Config
+
 import pandas as pd
-from typing import Tuple, Any
+from typing import Tuple, Any, Union
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -19,40 +19,50 @@ import matplotlib.pyplot as plt
 #     tqdm.miniters = 1
 
 
-def load_data_df(train_mode: str, config: Config) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    data_df = pd.read_csv(
-        os.path.join(
-            config.general_config.data.data_folder,
-            config.general_config.data.data_table_file_name,
-        )
-    )
+def load_data_df(
+    data_df_path: str,
+    labeled_sample_size: int,
+    unlabeled_sample_size: int,
+    train_mode: str,
+    random_seed: int,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    data_df = pd.read_csv(data_df_path)
     labeled_data_df = data_df[data_df["Label"].notna()]
     labeled_data_df = labeled_data_df.sample(
-        n=min(config.general_config.data.labeled_sample_size, len(labeled_data_df)),
-        random_state=config.general_config.system.random_seed,
+        n=min(labeled_sample_size, len(labeled_data_df)),
+        random_state=random_seed,
         replace=False,
     )
     if train_mode != "supervised":
         unlabeled_data_df = data_df[data_df["Label"].isna()]
         unlabeled_data_df = unlabeled_data_df.sample(
-            n=min(config.general_config.data.unlabeled_sample_size, len(unlabeled_data_df)),
-            random_state=config.general_config.system.random_seed,
+            n=min(unlabeled_sample_size, len(unlabeled_data_df)),
+            random_state=random_seed,
             replace=False,
         )
         return labeled_data_df, unlabeled_data_df
     else:
-        return labeled_data_df, None
+        return labeled_data_df, pd.DataFrame()
 
 
 # Print log
-def print_log(message: str, log_folder: str = None, log_mode: bool = True, *args, **kwargs):
+def print_log(
+    message: str, log_folder: str = None, log_mode: bool = True, *args, **kwargs
+):
     if log_mode:
         print(message, *args, **kwargs)
         if log_folder:
             with open(os.path.join(log_folder, "log.txt"), "a") as f:
                 f.write(message + "\n")
 
-def save_loss_and_accuracy(train_losses: list[Any], val_losses: list[Any], train_accuracies: list[Any], val_accuracies: list[Any], folder_path: str):
+
+def save_loss_and_accuracy(
+    train_losses: list[Any],
+    val_losses: list[Any],
+    train_accuracies: list[Any],
+    val_accuracies: list[Any],
+    folder_path: str,
+):
     averaged = False
     if isinstance(train_losses[0], list):
         train_losses = np.mean(np.array(train_losses), axis=0)
@@ -73,11 +83,22 @@ def save_loss_and_accuracy(train_losses: list[Any], val_losses: list[Any], train
     with open(os.path.join(folder_path, "train_val_training_report.txt"), "w") as f:
         f.write(f"{'Averaged ' if averaged else ''}Train Losses: {train_losses_list}\n")
         f.write(f"{'Averaged ' if averaged else ''}Val Losses: {val_losses_list}\n")
-        f.write(f"{'Averaged ' if averaged else ''}Train Accuracies: {train_accuracies_list}\n")
-        f.write(f"{'Averaged ' if averaged else ''}Val Accuracies: {val_accuracies_list}\n")
+        f.write(
+            f"{'Averaged ' if averaged else ''}Train Accuracies: {train_accuracies_list}\n"
+        )
+        f.write(
+            f"{'Averaged ' if averaged else ''}Val Accuracies: {val_accuracies_list}\n"
+        )
 
 
-def plot_loss_and_accuracy(train_losses: list[Any], val_losses: list[Any], train_accuracies: list[Any], val_accuracies: list[Any], folder_path: str, save: bool = True):
+def plot_loss_and_accuracy(
+    train_losses: list[Any],
+    val_losses: list[Any],
+    train_accuracies: list[Any],
+    val_accuracies: list[Any],
+    folder_path: str,
+    save: bool = True,
+):
     averaged = False
     if isinstance(train_losses[0], list):
         train_losses = np.mean(np.array(train_losses), axis=0)

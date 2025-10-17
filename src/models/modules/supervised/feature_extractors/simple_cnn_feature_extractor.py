@@ -11,31 +11,26 @@ class SimpleCNNFeatureExtractor(BaseFeatureExtractor):
     def __init__(
         self,
         input_dim: int,
+        output_size: int,
         freeze_feature_extractor: bool = False,
-        output_dim: int = 28,
         **kwargs,
     ):
-        super().__init__(input_dim, freeze_feature_extractor)
-        self.output_dim = output_dim
+        super().__init__(input_dim, output_size, freeze_feature_extractor)
+
         self.feature_extractor = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            nn.Conv2d(3, 32, kernel_size=3, padding=1),   # Fewer output channels
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2, 2),  # 224 -> 112
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),  # Fewer output channels
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2, 2),  # 112 -> 56
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),  # Fewer output channels
             nn.ReLU(inplace=True),
-            nn.AdaptiveMaxPool2d(output_size=(self.output_dim, self.output_dim)),
-            nn.Flatten(),
+            nn.AdaptiveAvgPool2d(output_size=(1, 1)),  # Reduce spatial dims to 1x1
+            nn.Flatten(),  # (B, 128)
+            nn.Linear(128, self.output_size),  # Project to desired feature size
         )
-        # Ensure all parameters are float32
-        self.float()
-
-    def get_output_dim(self) -> int:
-        """Return the output dimension of the feature extractor."""
-        # 128 channels * 28 * 28 = 100,352 features (matches notebook)
-        return 128 * self.output_dim * self.output_dim
 
     def forward(self, x_image: torch.Tensor) -> torch.Tensor:
         """
@@ -49,3 +44,8 @@ class SimpleCNNFeatureExtractor(BaseFeatureExtractor):
         """
         image_features = self.feature_extractor(x_image)
         return image_features
+
+    def to_dict(self) -> dict:
+        base_dict = super().to_dict()
+        base_dict["feature_extractor"] = str(self.feature_extractor)
+        return base_dict

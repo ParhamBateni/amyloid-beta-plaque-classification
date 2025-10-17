@@ -1,17 +1,33 @@
 import torch
 import pandas as pd
 import os
-from typing import Dict, Optional, Tuple
-from sklearn.preprocessing import LabelEncoder
-from torchvision import transforms
+from typing import Dict, Optional, Tuple, Union
+
+from torchvision import transforms as trf
 from PIL import Image
 from tqdm import tqdm
 import sys
-from sklearn.model_selection import train_test_split
 from models.config import Config
 from typing import List
 import matplotlib.pyplot as plt
 from torchvision.transforms.functional import to_pil_image
+
+class PlaqueDatasetAugmented(torch.utils.data.Dataset):
+    def __init__(self, data_df: pd.DataFrame, data_folder_path: str, name_to_label: Dict[str, int] = {}, transforms: Union[trf.Compose, List[trf.Compose]] = None, preload: bool = False, description: str = "Plaque images", normalize_data: bool = True, normalize_mean: Optional[torch.Tensor] = None, normalize_std: Optional[torch.Tensor] = None, use_extra_features: bool = False, downscaled_image_size: Tuple[int, int] = (224, 224), downscaling_method: str = "bilinear", number_of_augmentations: int = 1):
+        self.transforms = transforms
+        self.number_of_augmentations = number_of_augmentations
+        self.plaque_datasets = [PlaqueDataset(data_df=data_df, data_folder_path=data_folder_path, name_to_label=name_to_label, transforms=transforms, preload=preload, apply_transforms_on_the_fly=False, description=description, normalize_data=normalize_data, normalize_mean=normalize_mean, normalize_std=normalize_std, use_extra_features=use_extra_features, downscaled_image_size=downscaled_image_size, downscaling_method=downscaling_method) for _ in range(number_of_augmentations)]
+        self.plaque_datasets.append(PlaqueDataset(data_df=data_df, data_folder_path=data_folder_path, name_to_label=name_to_label, transforms=trf.ToTensor(), preload=preload, apply_transforms_on_the_fly=True, description=description, normalize_data=normalize_data, normalize_mean=normalize_mean, normalize_std=normalize_std, use_extra_features=use_extra_features, downscaled_image_size=downscaled_image_size, downscaling_method=downscaling_method))
+    
+    def __len__(self):
+        return len(self.plaque_datasets[0])*(self.number_of_augmentations+1)
+    
+    def __getitem__(self, idx: int):
+        dataset_idx = idx//(len(self.plaque_datasets[0]))
+        transform_idx = idx%(len(self.plaque_datasets[0]))
+        image_path, _, normalized_transformed_image_tensors, extra_features, label = self.plaque_datasets[dataset_idx][transform_idx]
+        return image_path, normalized_transformed_image_tensors[0], extra_features, label
+
 
 
 # PlaqueDataset
@@ -20,49 +36,38 @@ class PlaqueDataset(torch.utils.data.Dataset):
         self,
         data_df: pd.DataFrame,
         data_folder_path: str,
-        name_to_label: Dict[str, int] = None,
-        transform: transforms.Compose = None,
+        name_to_label: Dict[str, int] = {},
+        transforms: Union[trf.Compose, List[trf.Compose]] = None,
         preload: bool = False,
-        apply_transforms_on_the_fly: bool = True,
+        apply_transforms_on_the_fly: bool = False,
         description: str = "Plaque images",
         normalize_data: bool = True,
         normalize_mean: Optional[torch.Tensor] = None,
         normalize_std: Optional[torch.Tensor] = None,
         use_extra_features: bool = False,
-        pixels_scale: int = 255,
         downscaled_image_size: Tuple[int, int] = (224, 224),
         downscaling_method: str = "bilinear",
     ):
         self.data_df = data_df
         self.data_folder_path = data_folder_path
         # build the name_to_label dictionary if it is not provided impute the labels using scikit-learn
-        self.name_to_label = (
-            name_to_label
-            if name_to_label is not None
-            else {
-                k: v
-                for k, v in enumerate(
-                    LabelEncoder().fit(data_df["Label"]).transform(data_df["Label"])
-                )
-            }
-        )
+        self.name_to_label = name_to_label if name_to_label is not None else {}
         self.label_to_name = {v: k for k, v in self.name_to_label.items()}
-        self.transform = transform
+        if isinstance(transforms, List):
+            self.transforms = transforms
+        else:
+            self.transforms = [transforms]
+
         self.preload = preload
         # If preload is True, apply_transforms_on_the_fly determines whether to apply the transform on the fly or not
         self.apply_transforms_on_the_fly = apply_transforms_on_the_fly
         # store normalization stats (expected shape [C])
         self.normalize_data = normalize_data
-        self.normalize_mean = (
-            normalize_mean.clone().detach() if normalize_mean is not None else None
-        )
-        self.normalize_std = (
-            normalize_std.clone().detach() if normalize_std is not None else None
-        )
+        self.normalize_mean = normalize_mean
+        self.normalize_std = normalize_std
         self.downscaled_image_size = downscaled_image_size
         self.downscaling_method = downscaling_method
         self.use_extra_features = use_extra_features
-        self.pixels_scale = pixels_scale
         self._preloaded_data = None
         if self.preload:
             self._preloaded_data = []
@@ -87,38 +92,16 @@ class PlaqueDataset(torch.utils.data.Dataset):
         str, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int
     ]:
         if self.preload and self._preloaded_data is not None:
-            (
-                image_path,
-                scaled_raw_image_tensor,
-                scaled_transformed_image_tensor,
-                scaled_normalized_raw_image_tensor,
-                scaled_normalized_transformed_image_tensor,
-                extra_features,
-                label,
-            ) = self._preloaded_data[idx]
+            image_path, raw_image_tensor, normalized_raw_image_tensor, normalized_transformed_image_tensors, extra_features, label = self._preloaded_data[idx]
             # If we apply transforms on the fly, recompute transformed and its normalized variant now
-            if self.transform and self.apply_transforms_on_the_fly:
-                transformed_image_tensor = self.transform(to_pil_image(scaled_raw_image_tensor / self.pixels_scale))
-                scaled_transformed_image_tensor = (
-                    transformed_image_tensor * self.pixels_scale
-                )
-                scaled_normalized_transformed_image_tensor = (
-                    self._normalize_tensor(transformed_image_tensor) * self.pixels_scale
-                )
-            return (
-                image_path,
-                scaled_raw_image_tensor,
-                scaled_transformed_image_tensor,
-                scaled_normalized_raw_image_tensor,
-                scaled_normalized_transformed_image_tensor,
-                extra_features,
-                label,
-            )
-        return self._process_row(idx)
+            if self.transforms and self.apply_transforms_on_the_fly:
+                normalized_transformed_image_tensors = torch.stack([self._normalize_tensor(transform(to_pil_image(raw_image_tensor))) for transform in self.transforms])
+        else:
+            image_path, _, normalized_raw_image_tensor, normalized_transformed_image_tensors, extra_features, label = self._process_row(idx)
+        return (image_path, normalized_raw_image_tensor, normalized_transformed_image_tensors, extra_features, label)
 
     def _process_row(self, idx: int, apply_transform: bool = True) -> Tuple[
         str,
-        torch.Tensor,
         torch.Tensor,
         torch.Tensor,
         torch.Tensor,
@@ -138,22 +121,18 @@ class PlaqueDataset(torch.utils.data.Dataset):
             raw_image_pil = Image.open(image_path).convert("RGB").resize(self.downscaled_image_size, Image.NEAREST)
         else:
             raise ValueError(f"Invalid downscaling method: {self.downscaling_method}. It should be either 'bilinear' or 'nearest'.")
-        raw_image_tensor = transforms.ToTensor()(raw_image_pil)
+        raw_image_tensor = trf.ToTensor()(raw_image_pil)
         # Ensure transform receives the correct input type (Tensor or PIL as expected)
-        if self.transform and apply_transform:
-            transformed_image_tensor = self.transform(raw_image_pil)
+        if self.transforms and apply_transform:
+            normalized_transformed_image_tensors = torch.stack([self._normalize_tensor(transform(raw_image_pil)) for transform in self.transforms])
         else:
-            transformed_image_tensor = raw_image_tensor
+            normalized_transformed_image_tensors = torch.empty(0, dtype=torch.float32)
         normalized_raw_image_tensor = self._normalize_tensor(raw_image_tensor)
-        normalized_transformed_image_tensor = self._normalize_tensor(
-            transformed_image_tensor
-        )
         return (
             image_path,
-            raw_image_tensor * self.pixels_scale,
-            transformed_image_tensor * self.pixels_scale,
-            normalized_raw_image_tensor * self.pixels_scale,
-            normalized_transformed_image_tensor * self.pixels_scale,
+            raw_image_tensor,
+            normalized_raw_image_tensor,
+            normalized_transformed_image_tensors,
             (
                 torch.tensor([row["Roundness"], row["Area"]], dtype=torch.float32)
                 if self.use_extra_features
@@ -175,277 +154,206 @@ class PlaqueDataset(torch.utils.data.Dataset):
         return (image_tensor - mean) / std
 
 
-def load_labeled_dataloaders(train_labeled_data_df: pd.DataFrame, test_labeled_data_df: pd.DataFrame, val_labeled_data_df: pd.DataFrame, config: Config) -> List[torch.utils.data.DataLoader]:
-    normalize_mean = torch.tensor(
-        config.general_config.data.normalize_mean, dtype=torch.float32
-    )
-    normalize_std = torch.tensor(
-        config.general_config.data.normalize_std, dtype=torch.float32
-    )
-    # Augmentations only; normalization is applied inside the dataset and returned separately
-    labeled_train_transform = transforms.Compose(
-        [
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomVerticalFlip(p=0.5),
-            transforms.RandomRotation(degrees=(0, 90)),  # RandomRotate90
-            transforms.ColorJitter(
-                brightness=0.2, contrast=0.2
-            ),  # RandomBrightnessContrast
-            transforms.ToTensor(),
-        ]
-    )
-    labeled_val_transform = transforms.Compose(
-        [
-            transforms.ToTensor()
-        ]
-    )
-    labeled_test_transform = transforms.Compose(
-        [
-            transforms.ToTensor()
-        ]
-    )
-    labeled_data_folder_path = os.path.join(
-        config.general_config.data.data_folder,
-        config.general_config.data.labeled_data_folder,
-    ) 
-    train_labeled_dataset = PlaqueDataset(
-        train_labeled_data_df,
-        labeled_data_folder_path,
-        name_to_label=config.name_to_label,
-        transform=labeled_train_transform if config.general_config.data.transform_data else None,
-        preload=config.general_config.data.preload_data,
-        apply_transforms_on_the_fly=config.general_config.data.apply_transforms_on_the_fly,
-        description="train labeled plaque images",
-        normalize_data=config.general_config.data.normalize_data,
-        normalize_mean=normalize_mean,
-        normalize_std=normalize_std,
-        use_extra_features=config.general_config.data.use_extra_features,
-        pixels_scale=config.general_config.data.pixels_scale,
-        downscaled_image_size=config.general_config.data.downscaled_image_size,
-        downscaling_method=config.general_config.data.downscaling_method,
-    )
-    test_labeled_dataset = PlaqueDataset(
-        test_labeled_data_df,
-        labeled_data_folder_path,
-        name_to_label=config.name_to_label,
-        transform=labeled_test_transform if config.general_config.data.transform_data else None,
-        preload=config.general_config.data.preload_data,
-        apply_transforms_on_the_fly=config.general_config.data.apply_transforms_on_the_fly,
-        description="test labeled plaque images",
-        normalize_data=config.general_config.data.normalize_data,
-        normalize_mean=normalize_mean,
-        normalize_std=normalize_std,
-        use_extra_features=config.general_config.data.use_extra_features,
-        pixels_scale=config.general_config.data.pixels_scale,
-        downscaled_image_size=config.general_config.data.downscaled_image_size,
-        downscaling_method=config.general_config.data.downscaling_method,
-    )
-    val_labeled_dataset = PlaqueDataset(
-        val_labeled_data_df,
-        labeled_data_folder_path,
-        name_to_label=config.name_to_label,
-        transform=labeled_val_transform if config.general_config.data.transform_data else None,
-        preload=config.general_config.data.preload_data,
-        apply_transforms_on_the_fly=config.general_config.data.apply_transforms_on_the_fly,
-        description="val labeled plaque images",
-        normalize_data=config.general_config.data.normalize_data,
-        normalize_mean=normalize_mean,
-        normalize_std=normalize_std,
-        use_extra_features=config.general_config.data.use_extra_features,
-        pixels_scale=config.general_config.data.pixels_scale,
-        downscaled_image_size=config.general_config.data.downscaled_image_size,
-        downscaling_method=config.general_config.data.downscaling_method,
-    )
+# def load_labeled_dataloaders(train_labeled_data_df: pd.DataFrame, test_labeled_data_df: pd.DataFrame, val_labeled_data_df: pd.DataFrame, train_transforms: List[trf.Compose], val_transforms: List[trf.Compose], test_transforms: List[trf.Compose], config: Config) -> List[torch.utils.data.DataLoader]:
+#     normalize_mean = torch.tensor(
+#         config.general_config.data.normalize_mean, dtype=torch.float32
+#     )
+#     normalize_std = torch.tensor(
+#         config.general_config.data.normalize_std, dtype=torch.float32
+#     )
+#     # Augmentations only; normalization is applied inside the dataset and returned separately
+#     labeled_data_folder_path = os.path.join(
+#         config.general_config.data.data_folder,
+#         config.general_config.data.labeled_data_folder,
+#     ) 
+#     train_labeled_dataset = PlaqueDataset(
+#         train_labeled_data_df,
+#         labeled_data_folder_path,
+#         name_to_label=config.name_to_label,
+#         transforms=train_transforms,
+#         preload=config.general_config.data.preload_data,
+#         apply_transforms_on_the_fly=config.general_config.data.apply_transforms_on_the_fly,
+#         description="train labeled plaque images",
+#         normalize_data=config.general_config.data.normalize_data,
+#         normalize_mean=normalize_mean,
+#         normalize_std=normalize_std,
+#         use_extra_features=config.general_config.data.use_extra_features,
+#         downscaled_image_size=config.general_config.data.downscaled_image_size,
+#         downscaling_method=config.general_config.data.downscaling_method,
+#     )
+#     test_labeled_dataset = PlaqueDataset(
+#         test_labeled_data_df,
+#         labeled_data_folder_path,
+#         name_to_label=config.name_to_label,
+#         transforms=test_transforms,
+#         preload=config.general_config.data.preload_data,
+#         apply_transforms_on_the_fly=config.general_config.data.apply_transforms_on_the_fly,
+#         description="test labeled plaque images",
+#         normalize_data=config.general_config.data.normalize_data,
+#         normalize_mean=normalize_mean,
+#         normalize_std=normalize_std,
+#         use_extra_features=config.general_config.data.use_extra_features,
+#         downscaled_image_size=config.general_config.data.downscaled_image_size,
+#         downscaling_method=config.general_config.data.downscaling_method,
+#     )
+#     val_labeled_dataset = PlaqueDataset(
+#         val_labeled_data_df,
+#         labeled_data_folder_path,
+#         name_to_label=config.name_to_label,
+#         transforms=val_transforms,
+#         preload=config.general_config.data.preload_data,
+#         apply_transforms_on_the_fly=config.general_config.data.apply_transforms_on_the_fly,
+#         description="val labeled plaque images",
+#         normalize_data=config.general_config.data.normalize_data,
+#         normalize_mean=normalize_mean,
+#         normalize_std=normalize_std,
+#         use_extra_features=config.general_config.data.use_extra_features,
+#         downscaled_image_size=config.general_config.data.downscaled_image_size,
+#         downscaling_method=config.general_config.data.downscaling_method,
+#     )
 
-    train_labeled_dataloader = torch.utils.data.DataLoader(
-        train_labeled_dataset,
-        batch_size=config.general_config.data.batch_size,
-        shuffle=False,
-        num_workers=config.general_config.data.num_workers,
-        pin_memory=config.general_config.data.pin_memory,
-        persistent_workers=config.general_config.data.persistent_workers,
-    )
-    test_labeled_dataloader = torch.utils.data.DataLoader(
-        test_labeled_dataset,
-        batch_size=config.general_config.data.batch_size,
-        shuffle=False,
-        num_workers=config.general_config.data.num_workers,
-        pin_memory=config.general_config.data.pin_memory,
-        persistent_workers=config.general_config.data.persistent_workers,
-    )
-    val_labeled_dataloader = torch.utils.data.DataLoader(
-        val_labeled_dataset,
-        batch_size=config.general_config.data.batch_size,
-        shuffle=False,
-        num_workers=config.general_config.data.num_workers,
-        pin_memory=config.general_config.data.pin_memory,
-        persistent_workers=config.general_config.data.persistent_workers,
-    )
-    return (
-        train_labeled_dataloader,
-        val_labeled_dataloader,
-        test_labeled_dataloader,
-    )
+#     train_labeled_dataloader = torch.utils.data.DataLoader(
+#         train_labeled_dataset,
+#         batch_size=config.general_config.data.batch_size,
+#         shuffle=False,
+#         num_workers=config.general_config.data.num_workers,
+#         pin_memory=config.general_config.data.pin_memory,
+#         persistent_workers=config.general_config.data.persistent_workers,
+#     )
+#     test_labeled_dataloader = torch.utils.data.DataLoader(
+#         test_labeled_dataset,
+#         batch_size=config.general_config.data.batch_size,
+#         shuffle=False,
+#         num_workers=config.general_config.data.num_workers,
+#         pin_memory=config.general_config.data.pin_memory,
+#         persistent_workers=config.general_config.data.persistent_workers,
+#     )
+#     val_labeled_dataloader = torch.utils.data.DataLoader(
+#         val_labeled_dataset,
+#         batch_size=config.general_config.data.batch_size,
+#         shuffle=False,
+#         num_workers=config.general_config.data.num_workers,
+#         pin_memory=config.general_config.data.pin_memory,
+#         persistent_workers=config.general_config.data.persistent_workers,
+#     )
+#     return (
+#         train_labeled_dataloader,
+#         val_labeled_dataloader,
+#         test_labeled_dataloader,
+#     )
 
-def load_unlabeled_dataloader(unlabeled_data_df: pd.DataFrame, config: Config) -> torch.utils.data.DataLoader:
-    if unlabeled_data_df is None:
-        return None
-    normalize_mean = torch.tensor(
-        config.general_config.data.normalize_mean, dtype=torch.float32
-    )
-    normalize_std = torch.tensor(
-        config.general_config.data.normalize_std, dtype=torch.float32
-    )
-    unlabeled_transform = transforms.Compose(
-        [
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomVerticalFlip(p=0.5),
-            transforms.RandomRotation(degrees=(0, 90)),  # RandomRotate90
-            transforms.ColorJitter(
-                brightness=0.2, contrast=0.2
-            ),  # RandomBrightnessContrast
-            transforms.ToTensor(),
-        ]
-    )
-    unlabeled_data_folder_path = os.path.join(
-        config.general_config.data.data_folder,
-        config.general_config.data.unlabeled_data_folder,
-    )
-    unlabeled_dataset = PlaqueDataset(
-        unlabeled_data_df,
-        unlabeled_data_folder_path,
-        name_to_label=config.name_to_label,
-        transform=unlabeled_transform if config.general_config.data.transform_data else None,
-        preload=config.general_config.data.preload_data,
-        apply_transforms_on_the_fly=config.general_config.data.apply_transforms_on_the_fly,
-        description="unlabeled plaque images",
-        normalize_data=config.general_config.data.normalize_data,
-        normalize_mean=normalize_mean,
-        normalize_std=normalize_std,
-        use_extra_features=config.general_config.data.use_extra_features,
-        pixels_scale=config.general_config.data.pixels_scale,
-        downscaled_image_size=config.general_config.data.downscaled_image_size,
-        downscaling_method=config.general_config.data.downscaling_method,
-    )
-    unlabeled_dataloader = torch.utils.data.DataLoader(
-        unlabeled_dataset,
-        batch_size=config.general_config.data.batch_size,
-        shuffle=True,
-        num_workers=config.general_config.data.num_workers,
-        pin_memory=config.general_config.data.pin_memory,
-        persistent_workers=config.general_config.data.persistent_workers,
-    )
-    return unlabeled_dataloader
+# def load_unlabeled_dataloader(unlabeled_data_df: pd.DataFrame, unlabeled_transform: trf.Compose, config: Config) -> torch.utils.data.DataLoader:
+#     if len(unlabeled_data_df) == 0:
+#         return torch.utils.data.DataLoader([])
+#     normalize_mean = torch.tensor(
+#         config.general_config.data.normalize_mean, dtype=torch.float32
+#     )
+#     normalize_std = torch.tensor(
+#         config.general_config.data.normalize_std, dtype=torch.float32
+#     )
+#     unlabeled_data_folder_path = os.path.join(
+#         config.general_config.data.data_folder,
+#         config.general_config.data.unlabeled_data_folder,
+#     )
+#     unlabeled_dataset = PlaqueDataset(
+#         unlabeled_data_df,
+#         unlabeled_data_folder_path,
+#         name_to_label=config.name_to_label,
+#         transforms=unlabeled_transform,
+#         preload=config.general_config.data.preload_data,
+#         apply_transforms_on_the_fly=config.general_config.data.apply_transforms_on_the_fly,
+#         description="unlabeled plaque images",
+#         normalize_data=config.general_config.data.normalize_data,
+#         normalize_mean=normalize_mean,
+#         normalize_std=normalize_std,
+#         use_extra_features=config.general_config.data.use_extra_features,
+#         downscaled_image_size=config.general_config.data.downscaled_image_size,
+#         downscaling_method=config.general_config.data.downscaling_method,
+#     )
+#     unlabeled_dataloader = torch.utils.data.DataLoader(
+#         unlabeled_dataset,
+#         batch_size=config.general_config.data.batch_size,
+#         shuffle=True,
+#         num_workers=config.general_config.data.num_workers,
+#         pin_memory=config.general_config.data.pin_memory,
+#         persistent_workers=config.general_config.data.persistent_workers,
+#     )
+#     return unlabeled_dataloader
 
 
 
 if __name__ == "__main__":
-    print("Running plaque_dataset.py")
+    print("Running plaque_dataset.py visualization sample")
     from utils import load_data_df
     config = Config.load_config("configs")
-    
+
+    # Load data and create splits (using the config to locate paths and parameters)
     labeled_data_df, unlabeled_data_df = load_data_df("supervised", config)
-    print("labeled_data_df shape: ", labeled_data_df.shape)
-    print("unlabeled_data_df shape: ", unlabeled_data_df.shape)
-    train_labeled_data_df, test_labeled_data_df = train_test_split(
-        labeled_data_df,
-        test_size=config.general_config.data.val_size,
-        random_state=config.general_config.system.random_seed,
-    )
-    train_labeled_data_df, val_labeled_data_df = train_test_split(
-        train_labeled_data_df,
-        test_size=config.general_config.data.test_size,
-        random_state=config.general_config.system.random_seed,
-    )
-    print("train_labeled_data_df shape: ", train_labeled_data_df.shape)
-    print("test_labeled_data_df shape: ", test_labeled_data_df.shape)
-    print("val_labeled_data_df shape: ", val_labeled_data_df.shape)
-    (
-        train_labeled_dataloader,
-        val_labeled_dataloader,
-        test_labeled_dataloader,
-    ) = load_labeled_dataloaders(train_labeled_data_df, test_labeled_data_df, val_labeled_data_df, config)
-    unlabeled_dataloader = load_unlabeled_dataloader(unlabeled_data_df, config)
-    
-    
-    print("train_labeled_dataloader number of batches: ", len(train_labeled_dataloader))
-    print("val_labeled_dataloader number of batches: ", len(val_labeled_dataloader))
-    print("test_labeled_dataloader number of batches: ", len(test_labeled_dataloader))
-    print("unlabeled_dataloader number of batches: ", len(unlabeled_dataloader))
+    print("Loaded labeled_data_df shape: ", labeled_data_df.shape)
 
-    # Show the first batch pictures and labels
-    (
-        image_paths,
-        scaled_raw_images,
-        scaled_transformed_images,
-        scaled_normalized_raw_images,
-        scaled_normalized_transformed_images,
-        extra_features,
-        labels,
-    ) = next(iter(train_labeled_dataloader))
-    print("scaled_raw_images shape: ", scaled_raw_images.shape)
-    print("scaled_transformed_images shape: ", scaled_transformed_images.shape)
-    print("scaled_normalized_raw_images shape: ", scaled_normalized_raw_images.shape)
-    print("scaled_normalized_transformed_images shape: ", scaled_normalized_transformed_images.shape)
-    print("extra_features shape: ", extra_features.shape)
-    print("labels shape: ", labels.shape)
-    print("example scaled_raw_image: ", scaled_raw_images[0])
-    print("example scaled_transformed_image: ", scaled_transformed_images[0])
-    print("average pixel value of scaled_transformed_image: ", scaled_transformed_images[0].mean())
-    print("example scaled_normalized_raw_image: ", scaled_normalized_raw_images[0])
-    print("example scaled_normalized_transformed_image: ", scaled_normalized_transformed_images[0])
-    print("example extra_features: ", extra_features[0])
-    print("example labels: ", labels[0])
+    # Location of image data folder
+    labeled_data_folder_path = os.path.join(
+        config.general_config.data.data_folder, 
+        config.general_config.data.labeled_data_folder
+    )
 
-    LIMIT = 8
-    fig, ax = plt.subplots(min(LIMIT, len(scaled_raw_images)), 4, figsize=(20, 20))
-    for i in range(min(LIMIT, len(scaled_raw_images))):
-        print(f"image_paths {i}: {image_paths[i]}")
-        # If pixel values are in [0, 255], convert to [0, 1] for imshow
-        ax[i, 0].imshow((scaled_raw_images[i].permute(1, 2, 0) / config.general_config.data.pixels_scale).clip(0, 1))
-        ax[i, 1].imshow((scaled_transformed_images[i].permute(1, 2, 0) / config.general_config.data.pixels_scale).clip(0, 1))
-        ax[i, 2].imshow((scaled_normalized_raw_images[i].permute(1, 2, 0) / config.general_config.data.pixels_scale).clip(0, 1))
-        ax[i, 3].imshow((scaled_normalized_transformed_images[i].permute(1, 2, 0) / config.general_config.data.pixels_scale).clip(0, 1))
-        ax[i, 0].set_ylabel(f"{labels[i]}")
-        ax[i, 1].set_ylabel(f"{labels[i]}")
-        ax[i, 2].set_ylabel(f"{labels[i]}")
-        ax[i, 3].set_ylabel(f"{labels[i]}")
-        ax[i, 0].tick_params(
-            bottom=False,
-            top=False,
-            left=False,
-            right=False,
-            labelbottom=False,
-            labelleft=False,
-        )
-        ax[i, 1].tick_params(
-            bottom=False,
-            top=False,
-            left=False,
-            right=False,
-            labelbottom=False,
-            labelleft=False,
-        )
-        ax[i, 2].tick_params(
-            bottom=False,
-            top=False,
-            left=False,
-            right=False,
-            labelbottom=False,
-            labelleft=False,
-        )
-        ax[i, 3].tick_params(
-            bottom=False,
-            top=False,
-            left=False,
-            right=False,
-            labelbottom=False,
-            labelleft=False,
-        )
-        if i == min(LIMIT, len(scaled_raw_images)) - 1:
-            ax[i, 0].set_xlabel("Raw Image")
-            ax[i, 1].set_xlabel("Transformed Image")
-            ax[i, 2].set_xlabel("Normalized Raw Image")
-            ax[i, 3].set_xlabel("Normalized Transformed Image")
-        plt.tight_layout()
+    # Just sample from the labeled dataset for visualization
+    sample_indices = list(range(min(8, len(labeled_data_df))))
+    sample_df = labeled_data_df.iloc[sample_indices]
+
+    aug_transform = trf.Compose([
+        trf.RandomHorizontalFlip(p=0.5),
+        trf.RandomVerticalFlip(p=0.5),
+        trf.RandomRotation(degrees=(0, 90)),
+        trf.ColorJitter(brightness=0.2, contrast=0.2),
+        trf.ToTensor(),
+    ])
+
+    # ds = PlaqueDatasetAugmented(
+    #     sample_df,
+    #     labeled_data_folder_path,
+    #     name_to_label=config.name_to_label,
+    #     transforms=aug_transform,
+    #     description="labeled images (aug)",
+    #     normalize_data = False
+    # )
+    # i = 0
+    # while i < len(ds):
+    #     image_path, normalized_transformed_image_tensor, extra_features, label = ds[i]
+    #     normalized_transformed_image_tensor = normalized_transformed_image_tensor.permute(1, 2, 0).detach().cpu().numpy().clip(0, 1)
+    #     plt.imshow(normalized_transformed_image_tensor)
+    #     plt.show()
+    #     i+=8
+
+    ds = PlaqueDataset(
+        sample_df,
+        labeled_data_folder_path,
+        name_to_label=config.name_to_label,
+        transforms=aug_transform,
+        description="labeled images (aug)",
+        normalize_data = False
+    )
+
+    import numpy as np
+
+    LIMIT = min(8, len(ds))
+    fig, axes = plt.subplots(LIMIT, 2, figsize=(8, LIMIT * 3))
+    if LIMIT == 1:  # special case if only 1 image
+        axes = np.expand_dims(axes, axis=0)
+    for i in range(LIMIT):
+        # Get raw (unaugmented) and augmented samples from the datasets
+        image_path, normalized_raw_image_tensor, normalized_transformed_image_tensors, extra_features, label = ds[i]
+        normalized_transformed_image_tensor = normalized_transformed_image_tensors[0]
+        # Move channel to last dimension for imshow
+        normalized_raw_image_tensor = normalized_raw_image_tensor.permute(1, 2, 0).detach().cpu().numpy().clip(0, 1)
+        normalized_transformed_image_tensor = normalized_transformed_image_tensor.permute(1, 2, 0).detach().cpu().numpy().clip(0, 1)
+        axes[i, 0].imshow(normalized_raw_image_tensor)
+        axes[i, 0].set_yticks([112], [f"Label: {label}"])
+        axes[i, 0].set_title(f"Raw")
+        axes[i, 1].imshow(normalized_transformed_image_tensor)
+        axes[i, 1].set_yticks([112], [f"Label: {label}"])
+        axes[i, 1].set_title(f"Transformed")
+        for ax in axes[i]:
+            ax.set_xticks([])
+    plt.tight_layout()
     plt.show()

@@ -1,0 +1,8 @@
+{
+    "feature_extractor": "simple_cnn",
+    "classifier": "custom_mlp",
+    "semi_supervised": {
+        "unlabeled_weight": 0.1,
+        "consistency_weight": 1.0
+    }
+}

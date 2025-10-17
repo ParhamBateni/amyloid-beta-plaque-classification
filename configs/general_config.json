@@ -9,21 +9,28 @@
         "downscaling_method": "bilinear",
         "unlabeled_sample_size": 2000,
         "labeled_sample_size": 1e9,
-        "test_size": 0.2,
-        "val_size": 0.2,
         "preload_data": true,
         "apply_transforms_on_the_fly": false,
-        "transform_data": false,
         "normalize_data": false,
         "normalize_mean": [0.485, 0.456, 0.406],
         "normalize_std": [0.229, 0.224, 0.225],
         "use_extra_features": false,
-        "extra_feature_dim": 2,
-        "batch_size": 32,
-        "num_workers": 0,
+        "extra_feature_dim": 2
+    },
+    "training": {
+        "test_size": 0.2,
+        "val_size": 0.1,
+        "num_workers": 4,
         "pin_memory": true,
-        "persistent_workers": false,
-        "pixels_scale": 255
+        "persistent_workers": true,
+
+        "batch_size": 32,
+        "num_epochs": 10,
+        "optimizer": "adamw",
+        "learning_rate": 1e-5,
+        "weight_decay": 0.0,
+        "early_stop": 0,
+        "early_stop_check_val_every_n_epoch": 1
     },
     "system": {
         "debug_mode": true,
@@ -31,12 +38,5 @@
         "random_seed": 42
     },
     "cv_grid_search": {
-        "data": {
-            "downscaled_image_size": [[448, 448], [224, 224], [112, 112]],
-            "downscaling_method": ["bilinear", "bicubic", "nearest"],
-            "pixels_scale": [1, 255],
-            "batch_size": [32, 64, 128],
-            "use_extra_features": [true, false]
-        }
     }
 }
