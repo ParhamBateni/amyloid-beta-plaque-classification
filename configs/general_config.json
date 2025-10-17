@@ -4,7 +4,7 @@
         "data_table_file_name": "data_table_sampled_10k.csv",
         "labeled_data_folder": "labeled_images",
         "unlabeled_data_folder": "sampled_unlabeled_images",
-        "reports_folder": "reports",
+        "reports_folder": "run_reports",
         "downscaled_image_size": [224, 224],
         "downscaling_method": "bilinear",
         "unlabeled_sample_size": 2000,

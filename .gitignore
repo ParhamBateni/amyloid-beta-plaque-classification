@@ -5,6 +5,7 @@
 /run_logs/
 /run_reports/
 /garbage/
+
 __pycache__
 *.out
 *.err

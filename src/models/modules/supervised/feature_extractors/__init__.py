@@ -3,7 +3,7 @@ from .simple_cnn_feature_extractor import SimpleCNNFeatureExtractor
 from .resnet_feature_extractor import ResNetFeatureExtractor
 
 __all__ = [
-    'BaseFeatureExtractor',
-    'SimpleCNNFeatureExtractor', 
-    'ResNetFeatureExtractor'
+    "BaseFeatureExtractor",
+    "SimpleCNNFeatureExtractor",
+    "ResNetFeatureExtractor",
 ]

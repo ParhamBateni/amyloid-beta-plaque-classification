@@ -12,22 +12,77 @@ from typing import List
 import matplotlib.pyplot as plt
 from torchvision.transforms.functional import to_pil_image
 
+
 class PlaqueDatasetAugmented(torch.utils.data.Dataset):
-    def __init__(self, data_df: pd.DataFrame, data_folder_path: str, name_to_label: Dict[str, int] = {}, transforms: Union[trf.Compose, List[trf.Compose]] = None, preload: bool = False, description: str = "Plaque images", normalize_data: bool = True, normalize_mean: Optional[torch.Tensor] = None, normalize_std: Optional[torch.Tensor] = None, use_extra_features: bool = False, downscaled_image_size: Tuple[int, int] = (224, 224), downscaling_method: str = "bilinear", number_of_augmentations: int = 1):
+    def __init__(
+        self,
+        data_df: pd.DataFrame,
+        data_folder_path: str,
+        name_to_label: Dict[str, int] = {},
+        transforms: Union[trf.Compose, List[trf.Compose]] = None,
+        preload: bool = False,
+        description: str = "Plaque images",
+        normalize_data: bool = True,
+        normalize_mean: Optional[torch.Tensor] = None,
+        normalize_std: Optional[torch.Tensor] = None,
+        use_extra_features: bool = False,
+        downscaled_image_size: Tuple[int, int] = (224, 224),
+        downscaling_method: str = "bilinear",
+        number_of_augmentations: int = 1,
+    ):
         self.transforms = transforms
         self.number_of_augmentations = number_of_augmentations
-        self.plaque_datasets = [PlaqueDataset(data_df=data_df, data_folder_path=data_folder_path, name_to_label=name_to_label, transforms=transforms, preload=preload, apply_transforms_on_the_fly=False, description=description, normalize_data=normalize_data, normalize_mean=normalize_mean, normalize_std=normalize_std, use_extra_features=use_extra_features, downscaled_image_size=downscaled_image_size, downscaling_method=downscaling_method) for _ in range(number_of_augmentations)]
-        self.plaque_datasets.append(PlaqueDataset(data_df=data_df, data_folder_path=data_folder_path, name_to_label=name_to_label, transforms=trf.ToTensor(), preload=preload, apply_transforms_on_the_fly=True, description=description, normalize_data=normalize_data, normalize_mean=normalize_mean, normalize_std=normalize_std, use_extra_features=use_extra_features, downscaled_image_size=downscaled_image_size, downscaling_method=downscaling_method))
-    
-    def __len__(self):
-        return len(self.plaque_datasets[0])*(self.number_of_augmentations+1)
-    
-    def __getitem__(self, idx: int):
-        dataset_idx = idx//(len(self.plaque_datasets[0]))
-        transform_idx = idx%(len(self.plaque_datasets[0]))
-        image_path, _, normalized_transformed_image_tensors, extra_features, label = self.plaque_datasets[dataset_idx][transform_idx]
-        return image_path, normalized_transformed_image_tensors[0], extra_features, label
+        self.plaque_datasets = [
+            PlaqueDataset(
+                data_df=data_df,
+                data_folder_path=data_folder_path,
+                name_to_label=name_to_label,
+                transforms=transforms,
+                preload=preload,
+                apply_transforms_on_the_fly=False,
+                description=description,
+                normalize_data=normalize_data,
+                normalize_mean=normalize_mean,
+                normalize_std=normalize_std,
+                use_extra_features=use_extra_features,
+                downscaled_image_size=downscaled_image_size,
+                downscaling_method=downscaling_method,
+            )
+            for _ in range(number_of_augmentations)
+        ]
+        self.plaque_datasets.append(
+            PlaqueDataset(
+                data_df=data_df,
+                data_folder_path=data_folder_path,
+                name_to_label=name_to_label,
+                transforms=trf.ToTensor(),
+                preload=preload,
+                apply_transforms_on_the_fly=True,
+                description=description,
+                normalize_data=normalize_data,
+                normalize_mean=normalize_mean,
+                normalize_std=normalize_std,
+                use_extra_features=use_extra_features,
+                downscaled_image_size=downscaled_image_size,
+                downscaling_method=downscaling_method,
+            )
+        )
 
+    def __len__(self):
+        return len(self.plaque_datasets[0]) * (self.number_of_augmentations + 1)
+
+    def __getitem__(self, idx: int):
+        dataset_idx = idx // (len(self.plaque_datasets[0]))
+        transform_idx = idx % (len(self.plaque_datasets[0]))
+        image_path, _, normalized_transformed_image_tensors, extra_features, label = (
+            self.plaque_datasets[dataset_idx][transform_idx]
+        )
+        return (
+            image_path,
+            normalized_transformed_image_tensors[0],
+            extra_features,
+            label,
+        )
 
 
 # PlaqueDataset
@@ -88,17 +143,42 @@ class PlaqueDataset(torch.utils.data.Dataset):
 
     def __getitem__(
         self, idx: int
-    ) -> Tuple[
-        str, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int
-    ]:
+    ) -> Tuple[str, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int]:
         if self.preload and self._preloaded_data is not None:
-            image_path, raw_image_tensor, normalized_raw_image_tensor, normalized_transformed_image_tensors, extra_features, label = self._preloaded_data[idx]
+            (
+                image_path,
+                raw_image_tensor,
+                normalized_raw_image_tensor,
+                normalized_transformed_image_tensors,
+                extra_features,
+                label,
+            ) = self._preloaded_data[idx]
             # If we apply transforms on the fly, recompute transformed and its normalized variant now
             if self.transforms and self.apply_transforms_on_the_fly:
-                normalized_transformed_image_tensors = torch.stack([self._normalize_tensor(transform(to_pil_image(raw_image_tensor))) for transform in self.transforms])
+                normalized_transformed_image_tensors = torch.stack(
+                    [
+                        self._normalize_tensor(
+                            transform(to_pil_image(raw_image_tensor))
+                        )
+                        for transform in self.transforms
+                    ]
+                )
         else:
-            image_path, _, normalized_raw_image_tensor, normalized_transformed_image_tensors, extra_features, label = self._process_row(idx)
-        return (image_path, normalized_raw_image_tensor, normalized_transformed_image_tensors, extra_features, label)
+            (
+                image_path,
+                _,
+                normalized_raw_image_tensor,
+                normalized_transformed_image_tensors,
+                extra_features,
+                label,
+            ) = self._process_row(idx)
+        return (
+            image_path,
+            normalized_raw_image_tensor,
+            normalized_transformed_image_tensors,
+            extra_features,
+            label,
+        )
 
     def _process_row(self, idx: int, apply_transform: bool = True) -> Tuple[
         str,
@@ -116,15 +196,30 @@ class PlaqueDataset(torch.utils.data.Dataset):
         )
 
         if self.downscaling_method == "bilinear":
-            raw_image_pil = Image.open(image_path).convert("RGB").resize(self.downscaled_image_size, Image.BILINEAR)
+            raw_image_pil = (
+                Image.open(image_path)
+                .convert("RGB")
+                .resize(self.downscaled_image_size, Image.BILINEAR)
+            )
         elif self.downscaling_method == "nearest":
-            raw_image_pil = Image.open(image_path).convert("RGB").resize(self.downscaled_image_size, Image.NEAREST)
+            raw_image_pil = (
+                Image.open(image_path)
+                .convert("RGB")
+                .resize(self.downscaled_image_size, Image.NEAREST)
+            )
         else:
-            raise ValueError(f"Invalid downscaling method: {self.downscaling_method}. It should be either 'bilinear' or 'nearest'.")
+            raise ValueError(
+                f"Invalid downscaling method: {self.downscaling_method}. It should be either 'bilinear' or 'nearest'."
+            )
         raw_image_tensor = trf.ToTensor()(raw_image_pil)
         # Ensure transform receives the correct input type (Tensor or PIL as expected)
         if self.transforms and apply_transform:
-            normalized_transformed_image_tensors = torch.stack([self._normalize_tensor(transform(raw_image_pil)) for transform in self.transforms])
+            normalized_transformed_image_tensors = torch.stack(
+                [
+                    self._normalize_tensor(transform(raw_image_pil))
+                    for transform in self.transforms
+                ]
+            )
         else:
             normalized_transformed_image_tensors = torch.empty(0, dtype=torch.float32)
         normalized_raw_image_tensor = self._normalize_tensor(raw_image_tensor)
@@ -165,7 +260,7 @@ class PlaqueDataset(torch.utils.data.Dataset):
 #     labeled_data_folder_path = os.path.join(
 #         config.general_config.data.data_folder,
 #         config.general_config.data.labeled_data_folder,
-#     ) 
+#     )
 #     train_labeled_dataset = PlaqueDataset(
 #         train_labeled_data_df,
 #         labeled_data_folder_path,
@@ -281,10 +376,10 @@ class PlaqueDataset(torch.utils.data.Dataset):
 #     return unlabeled_dataloader
 
 
-
 if __name__ == "__main__":
     print("Running plaque_dataset.py visualization sample")
     from utils import load_data_df
+
     config = Config.load_config("configs")
 
     # Load data and create splits (using the config to locate paths and parameters)
@@ -293,21 +388,23 @@ if __name__ == "__main__":
 
     # Location of image data folder
     labeled_data_folder_path = os.path.join(
-        config.general_config.data.data_folder, 
-        config.general_config.data.labeled_data_folder
+        config.general_config.data.data_folder,
+        config.general_config.data.labeled_data_folder,
     )
 
     # Just sample from the labeled dataset for visualization
     sample_indices = list(range(min(8, len(labeled_data_df))))
     sample_df = labeled_data_df.iloc[sample_indices]
 
-    aug_transform = trf.Compose([
-        trf.RandomHorizontalFlip(p=0.5),
-        trf.RandomVerticalFlip(p=0.5),
-        trf.RandomRotation(degrees=(0, 90)),
-        trf.ColorJitter(brightness=0.2, contrast=0.2),
-        trf.ToTensor(),
-    ])
+    aug_transform = trf.Compose(
+        [
+            trf.RandomHorizontalFlip(p=0.5),
+            trf.RandomVerticalFlip(p=0.5),
+            trf.RandomRotation(degrees=(0, 90)),
+            trf.ColorJitter(brightness=0.2, contrast=0.2),
+            trf.ToTensor(),
+        ]
+    )
 
     # ds = PlaqueDatasetAugmented(
     #     sample_df,
@@ -331,7 +428,7 @@ if __name__ == "__main__":
         name_to_label=config.name_to_label,
         transforms=aug_transform,
         description="labeled images (aug)",
-        normalize_data = False
+        normalize_data=False,
     )
 
     import numpy as np
@@ -342,11 +439,29 @@ if __name__ == "__main__":
         axes = np.expand_dims(axes, axis=0)
     for i in range(LIMIT):
         # Get raw (unaugmented) and augmented samples from the datasets
-        image_path, normalized_raw_image_tensor, normalized_transformed_image_tensors, extra_features, label = ds[i]
+        (
+            image_path,
+            normalized_raw_image_tensor,
+            normalized_transformed_image_tensors,
+            extra_features,
+            label,
+        ) = ds[i]
         normalized_transformed_image_tensor = normalized_transformed_image_tensors[0]
         # Move channel to last dimension for imshow
-        normalized_raw_image_tensor = normalized_raw_image_tensor.permute(1, 2, 0).detach().cpu().numpy().clip(0, 1)
-        normalized_transformed_image_tensor = normalized_transformed_image_tensor.permute(1, 2, 0).detach().cpu().numpy().clip(0, 1)
+        normalized_raw_image_tensor = (
+            normalized_raw_image_tensor.permute(1, 2, 0)
+            .detach()
+            .cpu()
+            .numpy()
+            .clip(0, 1)
+        )
+        normalized_transformed_image_tensor = (
+            normalized_transformed_image_tensor.permute(1, 2, 0)
+            .detach()
+            .cpu()
+            .numpy()
+            .clip(0, 1)
+        )
         axes[i, 0].imshow(normalized_raw_image_tensor)
         axes[i, 0].set_yticks([112], [f"Label: {label}"])
         axes[i, 0].set_title(f"Raw")

@@ -23,12 +23,14 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
         self.pretrained = pretrained
         # Load pretrained ResNet model
         try:
-            self.feature_extractor = getattr(models, model_name)(pretrained=self.pretrained)
+            self.feature_extractor = getattr(models, model_name)(
+                pretrained=self.pretrained
+            )
         except AttributeError:
             raise ValueError(f"Unsupported ResNet model: {model_name}")
         # Remove the final classification layer
         self.feature_extractor = nn.Sequential(
-            *list(self.feature_extractor.children())[:-1],        # up to avgpool
+            *list(self.feature_extractor.children())[:-1],  # up to avgpool
             nn.Flatten(),  # [B, C, 1, 1] → [B, C]
             nn.Linear(
                 self.feature_extractor.fc.in_features, self.output_size

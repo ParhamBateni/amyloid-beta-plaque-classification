@@ -9,7 +9,9 @@ class BaseFeatureExtractor(ABC, nn.Module):
     All feature extractors should inherit from this class.
     """
 
-    def __init__(self, input_dim: int, output_size:int , freeze_feature_extractor: bool = False):
+    def __init__(
+        self, input_dim: int, output_size: int, freeze_feature_extractor: bool = False
+    ):
         super().__init__()
         self.freeze_feature_extractor = freeze_feature_extractor
         self.input_dim = input_dim
@@ -51,18 +53,22 @@ class BaseFeatureExtractor(ABC, nn.Module):
     #         if output.dim() > 2:
     #             output = output.view(output.size(0), -1)
     #         return int(output.shape[1])
-            
+
     @staticmethod
-    def create_feature_extractor(feature_extractor_name: str, input_dim: int, feature_extractor_config: dict) -> "BaseFeatureExtractor":
+    def create_feature_extractor(
+        feature_extractor_name: str, input_dim: int, feature_extractor_config: dict
+    ) -> "BaseFeatureExtractor":
         if feature_extractor_name == "simple_cnn":
             from .simple_cnn_feature_extractor import SimpleCNNFeatureExtractor
+
             return SimpleCNNFeatureExtractor(input_dim, **feature_extractor_config)
         elif feature_extractor_name.startswith("resnet"):
             from .resnet_feature_extractor import ResNetFeatureExtractor
+
             return ResNetFeatureExtractor(input_dim, **feature_extractor_config)
         else:
             raise ValueError(f"Feature extractor {feature_extractor_name} not found")
-    
+
     def to_dict(self) -> dict:
         """
         Convert the feature extractor to a dictionary.
@@ -71,5 +77,5 @@ class BaseFeatureExtractor(ABC, nn.Module):
             "input_dim": self.input_dim,
             "output_size": self.output_size,
             "freeze_feature_extractor": self.freeze_feature_extractor,
-            "feature_extractor": str(self.feature_extractor)
+            "feature_extractor": str(self.feature_extractor),
         }

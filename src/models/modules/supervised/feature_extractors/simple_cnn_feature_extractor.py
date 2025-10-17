@@ -18,10 +18,9 @@ class SimpleCNNFeatureExtractor(BaseFeatureExtractor):
         super().__init__(input_dim, output_size, freeze_feature_extractor)
 
         self.feature_extractor = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),   # Fewer output channels
+            nn.Conv2d(3, 32, kernel_size=3, padding=1),  # Fewer output channels
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2, 2),  # 224 -> 112
-
             nn.Conv2d(32, 64, kernel_size=3, padding=1),  # Fewer output channels
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2, 2),  # 112 -> 56

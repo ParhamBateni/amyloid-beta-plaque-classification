@@ -9,4 +9,4 @@ pillow
 h5py
 pytorch-lightning
 torchmetrics
-
+black
