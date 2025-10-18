@@ -1,9 +1,8 @@
 from abc import abstractmethod, ABC
 
-from pandas.errors import AbstractMethodError
 from models.config import Config
 import os
-from utils import load_data_df
+from utils.data_utils import load_data_df
 
 
 class Runner(ABC):

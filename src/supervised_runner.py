@@ -16,13 +16,11 @@ from models.modules.supervised.feature_extractors.base_feature_extractor import 
 )
 from models.modules.supervised.classifiers.base_classifier import BaseClassifier
 import torch.nn as nn
-from utils import (
-    save_loss_and_accuracy,
-    plot_loss_and_accuracy,
-)
+from utils.plotting_utils import save_loss_and_accuracy, plot_loss_and_accuracy
 from report import generate_classification_report_df, save_classification_report
 from torchvision import transforms as trf
 from models.data.plaque_dataset import PlaqueDatasetAugmented
+from utils.logging_utils import StdoutRedirector
 
 
 class SupervisedRunner(Runner):
@@ -60,7 +58,7 @@ class SupervisedRunner(Runner):
             use_extra_features=self.config.general_config.data.use_extra_features,
             downscaled_image_size=self.config.general_config.data.downscaled_image_size,
             downscaling_method=self.config.general_config.data.downscaling_method,
-            number_of_augmentations=self.config.supervised.supervised_config.training.number_of_augmentations,
+            number_of_augmentations=self.config.supervised.supervised_config.data.number_of_augmentations,
         )
         val_labeled_plaque_dataset = PlaqueDatasetAugmented(
             val_labeled_data_df,
@@ -74,7 +72,7 @@ class SupervisedRunner(Runner):
             use_extra_features=self.config.general_config.data.use_extra_features,
             downscaled_image_size=self.config.general_config.data.downscaled_image_size,
             downscaling_method=self.config.general_config.data.downscaling_method,
-            number_of_augmentations=self.config.supervised.supervised_config.training.number_of_augmentations,
+            number_of_augmentations=self.config.supervised.supervised_config.data.number_of_augmentations,
         )
         test_labeled_plaque_dataset = PlaqueDatasetAugmented(
             test_labeled_data_df,
@@ -194,25 +192,31 @@ class SupervisedRunner(Runner):
                     mode="min",
                 )
             )
-        # Persistent tqdm progress bar with ETA; leave=True keeps completed bars
+        # Standard progress bar with leave=True for persistent bars
         callbacks.append(TQDMProgressBar(refresh_rate=1, leave=True))
 
-        # Use a CSV logger to persist epoch metrics and disable progress bar to avoid line overwrites
-        csv_logger = pl.loggers.CSVLogger(
-            save_dir=self.run_report_folder, name="lightning_logs"
+        # Redirect all output to log file
+        full_output_log = os.path.join(
+            self.run_report_folder, "full_training_output.log"
         )
-        trainer = pl.Trainer(
-            max_epochs=self.config.general_config.training.num_epochs,
-            callbacks=callbacks,
-            enable_checkpointing=False,
-            logger=csv_logger,
-            enable_progress_bar=True,
-            log_every_n_steps=1,
-            num_sanity_val_steps=0,
-            check_val_every_n_epoch=self.config.general_config.training.early_stop_check_val_every_n_epoch,
-        )
-        trainer.fit(pl_module, datamodule=data_module)
-        trainer.test(pl_module, datamodule=data_module)
+
+        with StdoutRedirector(full_output_log):
+            # Use a CSV logger to persist epoch metrics and disable progress bar to avoid line overwrites
+            csv_logger = pl.loggers.CSVLogger(
+                save_dir=self.run_report_folder, name="lightning_logs"
+            )
+            trainer = pl.Trainer(
+                max_epochs=self.config.general_config.training.num_epochs,
+                callbacks=callbacks,
+                enable_checkpointing=False,
+                logger=csv_logger,
+                enable_progress_bar=True,
+                log_every_n_steps=1,
+                num_sanity_val_steps=0,
+                check_val_every_n_epoch=self.config.general_config.training.early_stop_check_val_every_n_epoch,
+            )
+            trainer.fit(pl_module, datamodule=data_module)
+            trainer.test(pl_module, datamodule=data_module)
         return (
             pl_module.train_losses,
             pl_module.val_losses,

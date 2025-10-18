@@ -10,3 +10,5 @@ __pycache__
 *.out
 *.err
 *.pkl
+
+data.zip

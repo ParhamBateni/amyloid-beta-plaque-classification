@@ -378,7 +378,7 @@ class PlaqueDataset(torch.utils.data.Dataset):
 
 if __name__ == "__main__":
     print("Running plaque_dataset.py visualization sample")
-    from utils import load_data_df
+    from utils.data_utils import load_data_df
 
     config = Config.load_config("configs")
 

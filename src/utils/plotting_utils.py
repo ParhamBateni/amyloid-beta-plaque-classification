@@ -1,68 +1,30 @@
-import os
+"""
+Plotting and visualization utilities.
+"""
 
-import pandas as pd
-from typing import Tuple, Any, Union
+import os
 import numpy as np
 import matplotlib.pyplot as plt
-
-# # Set default tensor type to float32 to avoid CUDA double precision issues
-# torch.set_default_dtype(torch.float32)
-# # Force all new tensors to be float32
-# torch.set_default_device(torch.device("cpu"))  # This helps ensure float32
-
-# # Configure tqdm for SLURM environments
-# import os
-# if os.environ.get('SLURM_JOB_ID'):
-#     # Force tqdm to use stdout and update frequently
-#     tqdm.monitor_interval = 0
-#     tqdm.mininterval = 0.1
-#     tqdm.miniters = 1
-
-
-def load_data_df(
-    data_df_path: str,
-    labeled_sample_size: int,
-    unlabeled_sample_size: int,
-    train_mode: str,
-    random_seed: int,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    data_df = pd.read_csv(data_df_path)
-    labeled_data_df = data_df[data_df["Label"].notna()]
-    labeled_data_df = labeled_data_df.sample(
-        n=min(labeled_sample_size, len(labeled_data_df)),
-        random_state=random_seed,
-        replace=False,
-    )
-    if train_mode != "supervised":
-        unlabeled_data_df = data_df[data_df["Label"].isna()]
-        unlabeled_data_df = unlabeled_data_df.sample(
-            n=min(unlabeled_sample_size, len(unlabeled_data_df)),
-            random_state=random_seed,
-            replace=False,
-        )
-        return labeled_data_df, unlabeled_data_df
-    else:
-        return labeled_data_df, pd.DataFrame()
-
-
-# Print log
-def print_log(
-    message: str, log_folder: str = None, log_mode: bool = True, *args, **kwargs
-):
-    if log_mode:
-        print(message, *args, **kwargs)
-        if log_folder:
-            with open(os.path.join(log_folder, "log.txt"), "a") as f:
-                f.write(message + "\n")
+from typing import Any, List
 
 
 def save_loss_and_accuracy(
-    train_losses: list[Any],
-    val_losses: list[Any],
-    train_accuracies: list[Any],
-    val_accuracies: list[Any],
+    train_losses: List[Any],
+    val_losses: List[Any],
+    train_accuracies: List[Any],
+    val_accuracies: List[Any],
     folder_path: str,
-):
+) -> None:
+    """
+    Save training metrics to a text file.
+
+    Args:
+        train_losses: List of training losses
+        val_losses: List of validation losses
+        train_accuracies: List of training accuracies
+        val_accuracies: List of validation accuracies
+        folder_path: Path to save the report
+    """
     averaged = False
     if isinstance(train_losses[0], list):
         train_losses = np.mean(np.array(train_losses), axis=0)
@@ -92,13 +54,24 @@ def save_loss_and_accuracy(
 
 
 def plot_loss_and_accuracy(
-    train_losses: list[Any],
-    val_losses: list[Any],
-    train_accuracies: list[Any],
-    val_accuracies: list[Any],
+    train_losses: List[Any],
+    val_losses: List[Any],
+    train_accuracies: List[Any],
+    val_accuracies: List[Any],
     folder_path: str,
     save: bool = True,
-):
+) -> None:
+    """
+    Plot and save training metrics.
+
+    Args:
+        train_losses: List of training losses
+        val_losses: List of validation losses
+        train_accuracies: List of training accuracies
+        val_accuracies: List of validation accuracies
+        folder_path: Path to save plots
+        save: Whether to save plots to files
+    """
     averaged = False
     if isinstance(train_losses[0], list):
         train_losses = np.mean(np.array(train_losses), axis=0)

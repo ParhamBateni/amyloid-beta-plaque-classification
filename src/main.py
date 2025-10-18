@@ -1,6 +1,6 @@
 import argparse
 
-from utils import print_log
+from utils.logging_utils import print_log
 from models.config import Config
 from models.runner import Runner
 
