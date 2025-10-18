@@ -2,7 +2,7 @@ import argparse
 
 from utils.logging_utils import print_log
 from models.config import Config
-from models.runner import Runner
+from models.base_runner import BaseRunner
 
 
 # def cross_validate(
@@ -111,7 +111,7 @@ if __name__ == "__main__":
         log_mode=config.general_config.system.log_mode,
         end="\n\n",
     )
-    runner = Runner.create_runner(args.train_mode, config)
+    runner = BaseRunner.create_runner(args.train_mode, config)
 
     if args.run_mode == "single":
         runner.run_single_experiment()

@@ -113,6 +113,9 @@ class Config:
             label_to_name[r["Value"]] = r["Name"]
             name_to_label[r["Name"]] = r["Value"]
 
+        label_to_name = {k: label_to_name[k] for k in sorted(label_to_name.keys())}
+        name_to_label = {k: name_to_label[k] for k in sorted(name_to_label.keys())}
+
         # Add label mappings to args
         config.label_to_name = label_to_name
         config.name_to_label = name_to_label
@@ -128,22 +131,18 @@ class Config:
         if train_mode == "supervised":
             del config.self_supervised
             del config.semi_supervised
-            config.supervised.supervised_config.feature_extractor = Config(
-                {"name": config.supervised.supervised_config.feature_extractor_name}
-                | config.supervised.feature_extractors_config[
+            config.supervised.supervised_config.feature_extractor_config = Config(
+                config.supervised.feature_extractors_config[
                     config.supervised.supervised_config.feature_extractor_name
                 ].to_dict()
             )
-            config.supervised.supervised_config.classifier = Config(
-                {"name": config.supervised.supervised_config.classifier_name}
-                | config.supervised.classifiers_config[
+            config.supervised.supervised_config.classifier_config = Config(
+                config.supervised.classifiers_config[
                     config.supervised.supervised_config.classifier_name
                 ].to_dict()
             )
             del config.supervised.feature_extractors_config
             del config.supervised.classifiers_config
-            del config.supervised.supervised_config.feature_extractor_name
-            del config.supervised.supervised_config.classifier_name
 
         elif train_mode == "semi_supervised":
             del config.supervised

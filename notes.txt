@@ -9,3 +9,5 @@ sinteractive --ntasks=1 --cpus-per-task=2 --mem=8G --time=1:00:00 \
 
 
 rsync -avz --exclude='data/' pbateni@hpc:/tudelft.net/staff-umbrella/NightId/pbateni/pbt-plaque-analysis/ ./
+
+autoflake --remove-all-unused-imports --in-place --recursive src
