@@ -11,6 +11,12 @@ class Config:
             k: Config(v) if isinstance(v, dict) else v for k, v in config.items()
         }
 
+    def __setattr__(self, name: str, value: any):
+        if name == "config":
+            super().__setattr__(name, value)
+        else:
+            self.config[name] = value
+
     def __getattr__(self, name: str):
         if name not in self.config:
             raise AttributeError(f"Config has no attribute {name}")
@@ -122,16 +128,23 @@ class Config:
         if train_mode == "supervised":
             del config.self_supervised
             del config.semi_supervised
-            config.supervised.supervised_config.feature_extractor = (
-                config.supervised.feature_extractors_config[
+            config.supervised.supervised_config.feature_extractor = Config(
+                {"name": config.supervised.supervised_config.feature_extractor_name}
+                | config.supervised.feature_extractors_config[
                     config.supervised.supervised_config.feature_extractor_name
                 ].to_dict()
             )
-            config.supervised.supervised_config.classifier = (
-                config.supervised.classifiers_config[
+            config.supervised.supervised_config.classifier = Config(
+                {"name": config.supervised.supervised_config.classifier_name}
+                | config.supervised.classifiers_config[
                     config.supervised.supervised_config.classifier_name
                 ].to_dict()
             )
+            del config.supervised.feature_extractors_config
+            del config.supervised.classifiers_config
+            del config.supervised.supervised_config.feature_extractor_name
+            del config.supervised.supervised_config.classifier_name
+
         elif train_mode == "semi_supervised":
             del config.supervised
             del config.self_supervised

@@ -4,7 +4,6 @@ import pandas as pd
 import os
 from tqdm import tqdm
 import argparse
-import sys
 import random
 from PIL import Image
 import shutil

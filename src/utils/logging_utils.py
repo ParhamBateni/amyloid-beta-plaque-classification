@@ -3,15 +3,13 @@ Logging and output utilities.
 """
 
 import os
-from typing import Any
 
 """
 Utility for redirecting output to multiple streams simultaneously.
 """
 
 import sys
-from typing import TextIO, List
-import logging
+from typing import TextIO
 
 
 class TeeOutput:
@@ -29,6 +27,8 @@ class TeeOutput:
             *files: File-like objects to write to (e.g., sys.stdout, open file)
         """
         self.files = files
+        # Use the first file (usually sys.stdout) as the primary for attribute delegation
+        self.primary = files[0] if files else None
 
     def write(self, obj: str) -> None:
         """
@@ -51,6 +51,14 @@ class TeeOutput:
         for f in self.files:
             if hasattr(f, "close") and f != sys.stdout and f != sys.stderr:
                 f.close()
+
+    def __getattr__(self, name):
+        """Delegate attribute access to the primary file object."""
+        if self.primary is not None:
+            return getattr(self.primary, name)
+        raise AttributeError(
+            f"'{self.__class__.__name__}' object has no attribute '{name}'"
+        )
 
 
 class StdoutRedirector:

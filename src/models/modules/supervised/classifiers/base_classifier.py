@@ -26,7 +26,6 @@ class BaseClassifier(ABC, nn.Module):
         Returns:
             Logits tensor of shape (n_samples, num_classes)
         """
-        pass
 
     def save(self, path: str) -> None:
         """

@@ -36,7 +36,6 @@ class BaseFeatureExtractor(ABC, nn.Module):
         Returns:
             Extracted features tensor
         """
-        pass
 
     # def get_output_size(self) -> int:
     #     """

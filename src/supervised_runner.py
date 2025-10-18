@@ -2,7 +2,6 @@ from models.runner import Runner
 from models.config import Config
 from sklearn.model_selection import train_test_split
 import os
-from models.data.plaque_dataset import PlaqueDataset
 import torch
 import pandas as pd
 import pytorch_lightning as pl
