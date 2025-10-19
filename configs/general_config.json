@@ -25,17 +25,18 @@
         "persistent_workers": true,
 
         "batch_size": 32,
-        "num_epochs": 200,
+        "num_epochs": 100,
         "optimizer": "adamw",
-        "learning_rate": 1e-4,
-        "weight_decay": 0.0,
+        "learning_rate": 1e-5,
+        "weight_decay": 1e-5,
         "early_stop": 5,
         "early_stop_check_val_every_n_epoch": 1
     },
     "system": {
         "debug_mode": true,
         "log_mode": true,
-        "random_seed": 42
+        "random_seed": 42,
+        "seed_everything": true
     },
     "cv_grid_search": {
     }

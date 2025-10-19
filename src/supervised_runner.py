@@ -174,12 +174,10 @@ class SupervisedRunner(BaseRunner):
         train_labeled_data_df, test_labeled_data_df = train_test_split(
             self.labeled_data_df,
             test_size=self.config.general_config.training.test_size,
-            random_state=self.config.general_config.system.random_seed,
         )
         train_labeled_data_df, val_labeled_data_df = train_test_split(
             train_labeled_data_df,
             test_size=self.config.general_config.training.val_size,
-            random_state=self.config.general_config.system.random_seed,
         )
         (
             train_losses,

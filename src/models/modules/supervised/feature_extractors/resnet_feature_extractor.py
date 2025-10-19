@@ -16,11 +16,13 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
         freeze_feature_extractor: bool = False,
         model_name: str = "resnet18",
         pretrained: bool = True,
+        dropout_rate: float = 0.2,
         **kwargs,
     ):
         super().__init__(input_dim, output_size, freeze_feature_extractor)
         self.model_name = model_name
         self.pretrained = pretrained
+        self.dropout_rate = dropout_rate
         # Load pretrained ResNet model
         try:
             self.feature_extractor = getattr(models, model_name)(
@@ -28,10 +30,14 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
             )
         except AttributeError:
             raise ValueError(f"Unsupported ResNet model: {model_name}")
+
         # Remove the final classification layer
         self.feature_extractor = nn.Sequential(
             *list(self.feature_extractor.children())[:-1],  # up to avgpool
             nn.Flatten(),  # [B, C, 1, 1] → [B, C]
+            nn.Dropout(
+                p=dropout_rate
+            ),  # Dropout before final linear classification/projection layer
             nn.Linear(
                 self.feature_extractor.fc.in_features, self.output_size
             ),  # [B, C] → [B, output_size]
@@ -55,4 +61,5 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
         base_dict = super().to_dict()
         base_dict["model_name"] = self.model_name
         base_dict["pretrained"] = self.pretrained
+        base_dict["dropout_rate"] = self.dropout_rate
         return base_dict

@@ -1,5 +1,5 @@
 {
-    "feature_extractor_name": "simple_cnn",
+    "feature_extractor_name": "resnet18",
     "classifier_name": "custom_mlp",
     "data": {
         "number_of_augmentations": 0

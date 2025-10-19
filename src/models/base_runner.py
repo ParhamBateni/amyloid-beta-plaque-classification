@@ -15,7 +15,8 @@ class BaseRunner(ABC):
     def __init__(self, config: Config):
         self.config = config
         # Set all random seeds for reproducibility
-        set_random_seeds(config.general_config.system.random_seed)
+        if config.general_config.system.seed_everything:
+            set_random_seeds(config.general_config.system.random_seed)
 
         self.runs_folder = os.path.join(
             config.general_config.data.runs_folder, f"{self._type()}_{config.run_id}"
@@ -32,7 +33,6 @@ class BaseRunner(ABC):
             labeled_sample_size=config.general_config.data.labeled_sample_size,
             unlabeled_sample_size=config.general_config.data.unlabeled_sample_size,
             train_mode=self._type(),
-            random_seed=config.general_config.system.random_seed,
         )
 
     @abstractmethod
@@ -108,11 +108,11 @@ class BaseRunner(ABC):
         callbacks.append(
             ModelCheckpoint(
                 dirpath=self.runs_folder,
-                filename="best_model-{epoch:02d}-{val_loss:.2f}",
+                filename="best_model",
                 monitor="val_loss",
                 mode="min",
                 save_top_k=1,
-                save_last=True,
+                save_last=False,
             )
         )
 
