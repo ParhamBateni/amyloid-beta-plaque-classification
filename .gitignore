@@ -2,8 +2,8 @@
 .vscode
 .idea
 /data/
-/run_logs/
-/run_reports/
+/logs/
+/runs/*
 /garbage/
 
 __pycache__

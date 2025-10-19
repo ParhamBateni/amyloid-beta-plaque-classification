@@ -19,10 +19,306 @@ from torchvision import transforms as trf
 from models.data.plaque_dataset import PlaqueDatasetAugmented
 from utils.logging_utils import StdoutRedirector
 
+from sklearn.model_selection import StratifiedKFold
+from tqdm import tqdm
+from report import (
+    generate_classification_report_df,
+    aggregate_classification_reports,
+    save_classification_report,
+)
+from pytorch_lightning.loggers import CSVLogger
+from pytorch_lightning.callbacks import ModelCheckpoint
+
 
 class SupervisedRunner(BaseRunner):
     def __init__(self, config: Config):
         super().__init__(config)
+
+    def run_single_experiment(self):
+        train_labeled_data_df, test_labeled_data_df = train_test_split(
+            self.labeled_data_df,
+            test_size=self.config.general_config.training.test_size,
+            stratify=self.labeled_data_df["Label"],
+        )
+        train_labeled_data_df, val_labeled_data_df = train_test_split(
+            train_labeled_data_df,
+            test_size=self.config.general_config.training.val_size,
+            stratify=train_labeled_data_df["Label"],
+        )
+        trainer = self._create_base_trainer(
+            callbacks=[
+                ModelCheckpoint(
+                    dirpath=self.runs_folder,
+                    filename="best_model",
+                    monitor="val_loss",
+                    mode="min",
+                    save_last=False,
+                )
+            ],
+            logger=CSVLogger(save_dir=self.runs_folder, name="lightning_logs"),
+        )
+
+        # Redirect all output to log file
+        full_output_log = os.path.join(
+            self.runs_folder,
+            f"full_training_output.log",
+        )
+
+        with StdoutRedirector(full_output_log):
+            (
+                train_losses,
+                val_losses,
+                train_accuracies,
+                val_accuracies,
+                test_labels,
+                test_preds,
+            ) = self._run_single_experiment(
+                train_labeled_data_df=train_labeled_data_df,
+                val_labeled_data_df=val_labeled_data_df,
+                test_labeled_data_df=test_labeled_data_df,
+                trainer=trainer,
+            )
+        save_loss_and_accuracy(
+            train_losses,
+            val_losses,
+            train_accuracies,
+            val_accuracies,
+            folder_path=self.runs_folder,
+        )
+        plot_loss_and_accuracy(
+            train_losses,
+            val_losses,
+            train_accuracies,
+            val_accuracies,
+            folder_path=self.runs_folder,
+            save=True,
+        )
+
+        # Save classification report using common method
+        classification_report_df = generate_classification_report_df(
+            test_labels, test_preds, self.config.name_to_label.keys()
+        )
+        print("Classification report:")
+        print(classification_report_df)
+        save_classification_report(
+            classification_report_df, folder_path=self.runs_folder
+        )
+
+    def cross_validate(self):
+        with StdoutRedirector(
+            os.path.join(self.runs_folder, "cross_validate_output.log")
+        ):
+            (
+                kfold_train_losses,
+                kfold_val_losses,
+                kfold_train_accuracies,
+                kfold_val_accuracies,
+                kfold_test_labels,
+                kfold_test_preds,
+                best_trainer,
+            ) = self._cross_validate()
+
+        if best_trainer is not None:
+            best_trainer.save_checkpoint(
+                os.path.join(self.runs_folder, "best_model_cv.ckpt")
+            )
+        save_loss_and_accuracy(
+            kfold_train_losses,
+            kfold_val_losses,
+            kfold_train_accuracies,
+            kfold_val_accuracies,
+            folder_path=self.runs_folder,
+            name=f"kfold_train_val_training_report.txt",
+        )
+        classification_reports_df = []
+        for test_labels, test_preds in zip(kfold_test_labels, kfold_test_preds):
+            classification_reports_df.append(
+                generate_classification_report_df(
+                    test_labels, test_preds, self.config.name_to_label.keys()
+                )
+            )
+        aggregated_classification_reports_df = aggregate_classification_reports(
+            classification_reports_df
+        )
+        print("Aggregated classification report:")
+        print(aggregated_classification_reports_df)
+        save_classification_report(
+            aggregated_classification_reports_df, folder_path=self.runs_folder
+        )
+
+    def optimize_hyperparameters(self):
+        pass
+
+    def load_model_from_checkpoint(self, checkpoint_path: str, device: str = "cpu"):
+        """
+        Load a model from checkpoint with automatic feature extractor and classifier creation.
+
+        Args:
+            checkpoint_path: Path to the checkpoint file
+            device: Device to load model on
+
+        Returns:
+            Loaded Lightning module ready for inference
+        """
+        # Load checkpoint to get hyperparameters
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+
+        # Create feature extractor and classifier using parent methods
+        feature_extractor = self._create_feature_extractor_from_config()
+        classifier = self._create_classifier_from_config(
+            feature_extractor.output_size
+            + (
+                self.config.general_config.data.extra_feature_dim
+                if self.config.general_config.data.use_extra_features
+                else 0
+            )
+        )
+
+        # Create criterion and optimizer using parent methods
+        criterion = nn.CrossEntropyLoss()
+        optimizer = self._create_base_optimizer()
+        optimizer_kwargs = self._get_base_optimizer_kwargs()
+
+        # Create model
+        model = LightningSupervisedModule(
+            feature_extractor=feature_extractor,
+            classifier=classifier,
+            criterion=criterion,
+            optimizer=optimizer,
+            optimizer_kwargs=optimizer_kwargs,
+            use_extra_features=self.config.general_config.data.use_extra_features,
+        )
+
+        # Load state dict
+        model.load_state_dict(checkpoint["state_dict"])
+        model.eval()
+        model.to(device)
+
+        print(f"Model loaded from: {checkpoint_path}")
+        print(f"Model type: {self._type()}")
+        print(
+            f"Feature extractor: {self.config.supervised.supervised_config.feature_extractor_name}"
+        )
+        print(f"Classifier: {self.config.supervised.supervised_config.classifier_name}")
+        print(f"Device: {device}")
+
+        return model
+
+    def _run_single_experiment(
+        self,
+        train_labeled_data_df: pd.DataFrame,
+        val_labeled_data_df: pd.DataFrame,
+        test_labeled_data_df: pd.DataFrame,
+        trainer: pl.Trainer,
+    ):
+        train_labeled_dataloader, val_labeled_dataloader, test_labeled_dataloader = (
+            self._load_dataloaders(
+                train_labeled_data_df, val_labeled_data_df, test_labeled_data_df
+            )
+        )
+        feature_extractor = self._create_feature_extractor_from_config()
+        classifier = self._create_classifier_from_config(
+            feature_extractor.output_size
+            + (
+                self.config.general_config.data.extra_feature_dim
+                if self.config.general_config.data.use_extra_features
+                else 0
+            )
+        )
+        criterion = nn.CrossEntropyLoss()
+        optimizer = self._create_base_optimizer()
+        optimizer_kwargs = self._get_base_optimizer_kwargs()
+
+        pl_module = LightningSupervisedModule(
+            feature_extractor=feature_extractor,
+            classifier=classifier,
+            criterion=criterion,
+            optimizer=optimizer,
+            optimizer_kwargs=optimizer_kwargs,
+            use_extra_features=self.config.general_config.data.use_extra_features,
+        )
+
+        data_module = SupervisedPlaqueLightningDataModule(
+            train_labeled_plaque_dataloader=train_labeled_dataloader,
+            val_labeled_plaque_dataloader=val_labeled_dataloader,
+            test_labeled_plaque_dataloader=test_labeled_dataloader,
+        )
+        trainer.fit(pl_module, datamodule=data_module)
+
+        trainer.test(pl_module, datamodule=data_module)
+        return (
+            pl_module.train_losses,
+            pl_module.val_losses,
+            pl_module.train_accuracies,
+            pl_module.val_accuracies,
+            pl_module.test_labels,
+            pl_module.test_preds,
+        )
+
+    def _cross_validate(self):
+        kfold = StratifiedKFold(
+            n_splits=self.config.general_config.training.cv_folds, shuffle=True
+        )
+        kfold_train_losses = []
+        kfold_val_losses = []
+        kfold_train_accuracies = []
+        kfold_val_accuracies = []
+        kfold_test_labels = []
+        kfold_test_preds = []
+        best_val_loss = float("inf")
+        best_trainer = None
+        for fold, (train_idx, test_idx) in tqdm(
+            enumerate(kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
+            total=self.config.general_config.training.cv_folds,
+            desc="Cross-validating",
+        ):
+            train_labeled_data_df = self.labeled_data_df.iloc[train_idx]
+            test_labeled_data_df = self.labeled_data_df.iloc[test_idx]
+            train_labeled_data_df, val_labeled_data_df = train_test_split(
+                train_labeled_data_df,
+                test_size=self.config.general_config.training.val_size,
+                stratify=train_labeled_data_df["Label"],
+            )
+            trainer = self._create_base_trainer()
+            (
+                train_losses,
+                val_losses,
+                train_accuracies,
+                val_accuracies,
+                test_labels,
+                test_preds,
+            ) = self._run_single_experiment(
+                train_labeled_data_df=train_labeled_data_df,
+                val_labeled_data_df=val_labeled_data_df,
+                test_labeled_data_df=test_labeled_data_df,
+                trainer=trainer,
+            )
+
+            # Track the best model across all folds
+            if val_losses[-1] < best_val_loss:
+                best_val_loss = val_losses[-1]
+                best_trainer = trainer
+                # The model is already saved in the fold folder, we'll copy it later
+
+            kfold_train_losses.append(train_losses[-1])
+            kfold_val_losses.append(val_losses[-1])
+            kfold_train_accuracies.append(train_accuracies[-1])
+            kfold_val_accuracies.append(val_accuracies[-1])
+            kfold_test_labels.append(test_labels)
+            kfold_test_preds.append(test_preds)
+
+        return (
+            kfold_train_losses,
+            kfold_val_losses,
+            kfold_train_accuracies,
+            kfold_val_accuracies,
+            kfold_test_labels,
+            kfold_test_preds,
+            best_trainer,
+        )
+
+    def _type(self) -> str:
+        return f"supervised_{self.config.supervised.supervised_config.feature_extractor_name}_{self.config.supervised.supervised_config.classifier_name}"
 
     def _load_dataloaders(
         self,
@@ -114,158 +410,6 @@ class SupervisedRunner(BaseRunner):
             val_labeled_dataloader,
             test_labeled_dataloader,
         )
-
-    def _run_single_experiment(
-        self,
-        train_labeled_data_df: pd.DataFrame,
-        val_labeled_data_df: pd.DataFrame,
-        test_labeled_data_df: pd.DataFrame,
-    ):
-        train_labeled_dataloader, val_labeled_dataloader, test_labeled_dataloader = (
-            self._load_dataloaders(
-                train_labeled_data_df, val_labeled_data_df, test_labeled_data_df
-            )
-        )
-        feature_extractor = self._create_feature_extractor_from_config()
-        classifier = self._create_classifier_from_config(feature_extractor.output_size)
-        criterion = nn.CrossEntropyLoss()
-        optimizer = self._create_optimizer()
-        optimizer_kwargs = self._get_optimizer_kwargs()
-
-        pl_module = LightningSupervisedModule(
-            feature_extractor=feature_extractor,
-            classifier=classifier,
-            criterion=criterion,
-            optimizer=optimizer,
-            optimizer_kwargs=optimizer_kwargs,
-            use_extra_features=self.config.general_config.data.use_extra_features,
-        )
-
-        data_module = SupervisedPlaqueLightningDataModule(
-            train_labeled_plaque_dataloader=train_labeled_dataloader,
-            val_labeled_plaque_dataloader=val_labeled_dataloader,
-            test_labeled_plaque_dataloader=test_labeled_dataloader,
-        )
-        # Create callbacks using common method
-        callbacks = self._create_callbacks()
-
-        # Redirect all output to log file
-        full_output_log = os.path.join(self.runs_folder, "full_training_output.log")
-
-        with StdoutRedirector(full_output_log):
-            # Use a CSV logger to persist epoch metrics
-            csv_logger = pl.loggers.CSVLogger(
-                save_dir=self.runs_folder, name="lightning_logs"
-            )
-            # Create trainer using common method
-            trainer = self._create_trainer(callbacks, csv_logger)
-            trainer.fit(pl_module, datamodule=data_module)
-            trainer.test(pl_module, datamodule=data_module)
-        return (
-            pl_module.train_losses,
-            pl_module.val_losses,
-            pl_module.train_accuracies,
-            pl_module.val_accuracies,
-            pl_module.test_labels,
-            pl_module.test_preds,
-        )
-
-    def run_single_experiment(self):
-        train_labeled_data_df, test_labeled_data_df = train_test_split(
-            self.labeled_data_df,
-            test_size=self.config.general_config.training.test_size,
-        )
-        train_labeled_data_df, val_labeled_data_df = train_test_split(
-            train_labeled_data_df,
-            test_size=self.config.general_config.training.val_size,
-        )
-        (
-            train_losses,
-            val_losses,
-            train_accuracies,
-            val_accuracies,
-            test_labels,
-            test_preds,
-        ) = self._run_single_experiment(
-            train_labeled_data_df=train_labeled_data_df,
-            val_labeled_data_df=val_labeled_data_df,
-            test_labeled_data_df=test_labeled_data_df,
-        )
-        save_loss_and_accuracy(
-            train_losses,
-            val_losses,
-            train_accuracies,
-            val_accuracies,
-            folder_path=self.runs_folder,
-        )
-        plot_loss_and_accuracy(
-            train_losses,
-            val_losses,
-            train_accuracies,
-            val_accuracies,
-            folder_path=self.runs_folder,
-            save=True,
-        )
-
-        # Save classification report using common method
-        self._save_classification_report(test_labels, test_preds)
-
-    def cross_validate(self):
-        pass
-
-    def optimize_hyperparameters(self):
-        pass
-
-    def _type(self) -> str:
-        return f"supervised_{self.config.supervised.supervised_config.feature_extractor_name}_{self.config.supervised.supervised_config.classifier_name}"
-
-    def load_model_from_checkpoint(self, checkpoint_path: str, device: str = "cpu"):
-        """
-        Load a model from checkpoint with automatic feature extractor and classifier creation.
-
-        Args:
-            checkpoint_path: Path to the checkpoint file
-            device: Device to load model on
-
-        Returns:
-            Loaded Lightning module ready for inference
-        """
-        # Load checkpoint to get hyperparameters
-        checkpoint = torch.load(checkpoint_path, map_location=device)
-
-        # Create feature extractor and classifier using parent methods
-        feature_extractor = self._create_feature_extractor_from_config()
-        classifier = self._create_classifier_from_config(feature_extractor.output_size)
-
-        # Create criterion and optimizer using parent methods
-        criterion = self._create_criterion()
-        optimizer = self._create_optimizer()
-        optimizer_kwargs = self._get_optimizer_kwargs()
-
-        # Create model
-        model = LightningSupervisedModule(
-            feature_extractor=feature_extractor,
-            classifier=classifier,
-            criterion=criterion,
-            optimizer=optimizer,
-            optimizer_kwargs=optimizer_kwargs,
-            use_extra_features=self.config.general_config.data.use_extra_features,
-        )
-
-        # Load state dict
-        model.load_state_dict(checkpoint["state_dict"])
-        model.eval()
-        model.to(device)
-
-        print(f"Model loaded from: {checkpoint_path}")
-        print(f"Model type: {self._type()}")
-        print(
-            f"Feature extractor: {self.config.supervised.supervised_config.feature_extractor_name}"
-        )
-        print(f"Classifier: {self.config.supervised.supervised_config.classifier_name}")
-        print(f"Device: {device}")
-
-        return model
 
     def _create_feature_extractor_from_config(self) -> BaseFeatureExtractor:
         """Create feature extractor based on config."""

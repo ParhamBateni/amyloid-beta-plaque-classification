@@ -4,11 +4,11 @@ from models.config import Config
 import os
 import torch
 from utils.data_utils import load_data_df
-from report import generate_classification_report_df, save_classification_report
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, TQDMProgressBar
 import torch
 from utils.seed_utils import set_random_seeds
+from typing import List
 
 
 class BaseRunner(ABC):
@@ -59,7 +59,7 @@ class BaseRunner(ABC):
     def _run_single_experiment(self, *args, **kwargs):
         pass
 
-    def _create_optimizer(self):
+    def _create_base_optimizer(self):
         """Create optimizer based on config."""
         if self.config.general_config.training.optimizer.lower() == "adamw":
             return torch.optim.AdamW
@@ -72,27 +72,19 @@ class BaseRunner(ABC):
                 f"Optimizer {self.config.general_config.training.optimizer} not found"
             )
 
-    def _get_optimizer_kwargs(self):
+    def _get_base_optimizer_kwargs(self):
         """Get optimizer keyword arguments."""
         return {
             "lr": self.config.general_config.training.learning_rate,
             "weight_decay": self.config.general_config.training.weight_decay,
         }
 
-    def _save_classification_report(self, test_labels, test_preds):
-        """Save classification report."""
-        classification_report_df = generate_classification_report_df(
-            test_labels, test_preds, self.config.name_to_label.keys()
-        )
-        print("Classification report:")
-        print(classification_report_df)
-        save_classification_report(
-            classification_report_df, folder_path=self.runs_folder
-        )
-
-    def _create_callbacks(self):
-        """Create common PyTorch Lightning callbacks."""
-        callbacks = []
+    def _create_base_trainer(self, callbacks: List[pl.Callback] = None, logger=False):
+        """Create PyTorch Lightning trainer."""
+        if callbacks is None:
+            callbacks = []
+        if logger is None:
+            logger = None
 
         # Early stopping
         if self.config.general_config.training.early_stop > 0:
@@ -103,35 +95,24 @@ class BaseRunner(ABC):
                     mode="min",
                 )
             )
-
-        # Model checkpointing
-        callbacks.append(
-            ModelCheckpoint(
-                dirpath=self.runs_folder,
-                filename="best_model",
-                monitor="val_loss",
-                mode="min",
-                save_top_k=1,
-                save_last=False,
-            )
-        )
-
         # Progress bar
         callbacks.append(TQDMProgressBar(refresh_rate=1, leave=True))
 
-        return callbacks
+        enable_checkpointing = False
+        for callback in callbacks:
+            if isinstance(callback, ModelCheckpoint):
+                enable_checkpointing = True
+                break
 
-    def _create_trainer(self, callbacks, logger=None):
-        """Create PyTorch Lightning trainer."""
         return pl.Trainer(
             max_epochs=self.config.general_config.training.num_epochs,
-            callbacks=callbacks,
-            enable_checkpointing=True,
-            logger=logger,
+            enable_checkpointing=enable_checkpointing,
             enable_progress_bar=True,
+            callbacks=callbacks,
             log_every_n_steps=1,
             num_sanity_val_steps=0,
             check_val_every_n_epoch=self.config.general_config.training.early_stop_check_val_every_n_epoch,
+            logger=logger,
         )
 
     @staticmethod

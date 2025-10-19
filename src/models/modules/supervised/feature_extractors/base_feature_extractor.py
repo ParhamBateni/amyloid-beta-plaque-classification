@@ -64,7 +64,9 @@ class BaseFeatureExtractor(ABC, nn.Module):
         elif feature_extractor_name.startswith("resnet"):
             from .resnet_feature_extractor import ResNetFeatureExtractor
 
-            return ResNetFeatureExtractor(input_dim, **feature_extractor_config)
+            return ResNetFeatureExtractor(
+                input_dim, model_name=feature_extractor_name, **feature_extractor_config
+            )
         else:
             raise ValueError(f"Feature extractor {feature_extractor_name} not found")
 

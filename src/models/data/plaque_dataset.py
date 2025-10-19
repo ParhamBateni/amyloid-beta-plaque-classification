@@ -118,8 +118,8 @@ class PlaqueDataset(torch.utils.data.Dataset):
         self.apply_transforms_on_the_fly = apply_transforms_on_the_fly
         # store normalization stats (expected shape [C])
         self.normalize_data = normalize_data
-        self.normalize_mean = normalize_mean
-        self.normalize_std = normalize_std
+        self.normalize_mean = torch.tensor(normalize_mean)
+        self.normalize_std = torch.tensor(normalize_std)
         self.downscaled_image_size = downscaled_image_size
         self.downscaling_method = downscaling_method
         self.use_extra_features = use_extra_features
@@ -223,16 +223,27 @@ class PlaqueDataset(torch.utils.data.Dataset):
         else:
             normalized_transformed_image_tensors = torch.empty(0, dtype=torch.float32)
         normalized_raw_image_tensor = self._normalize_tensor(raw_image_tensor)
+        if self.use_extra_features:
+            extra_features = torch.tensor(
+                [row["Roundness"], row["Area"]], dtype=torch.float32
+            )
+            extra_features_mean = torch.tensor(
+                [self.data_df["Roundness"].mean(), self.data_df["Area"].mean()],
+                dtype=torch.float32,
+            )
+            extra_features_std = torch.tensor(
+                [self.data_df["Roundness"].std(), self.data_df["Area"].std()],
+                dtype=torch.float32,
+            )
+            extra_features = (extra_features - extra_features_mean) / extra_features_std
+        else:
+            extra_features = torch.empty(0, dtype=torch.float32)
         return (
             image_path,
             raw_image_tensor,
             normalized_raw_image_tensor,
             normalized_transformed_image_tensors,
-            (
-                torch.tensor([row["Roundness"], row["Area"]], dtype=torch.float32)
-                if self.use_extra_features
-                else torch.empty(0, dtype=torch.float32)
-            ),
+            extra_features,
             self.name_to_label.get(row["Label"], -1),
         )
 

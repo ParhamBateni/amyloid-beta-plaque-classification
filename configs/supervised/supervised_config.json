@@ -1,8 +1,8 @@
 {
-    "feature_extractor_name": "resnet18",
+    "feature_extractor_name": "simple_cnn",
     "classifier_name": "custom_mlp",
     "data": {
-        "number_of_augmentations": 3
+        "number_of_augmentations": 1
     },
     "cv_grid_search": {
         "feature_extractor_name": ["simple_cnn", "resnet18", "resnet34"],

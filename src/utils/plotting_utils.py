@@ -14,6 +14,7 @@ def save_loss_and_accuracy(
     train_accuracies: List[Any],
     val_accuracies: List[Any],
     folder_path: str,
+    name: str = "train_val_training_report.txt",
 ) -> None:
     """
     Save training metrics to a text file.
@@ -42,7 +43,7 @@ def save_loss_and_accuracy(
     train_accuracies_list = to_float_list(train_accuracies)
     val_accuracies_list = to_float_list(val_accuracies)
 
-    with open(os.path.join(folder_path, "train_val_training_report.txt"), "w") as f:
+    with open(os.path.join(folder_path, name), "w") as f:
         f.write(f"{'Averaged ' if averaged else ''}Train Losses: {train_losses_list}\n")
         f.write(f"{'Averaged ' if averaged else ''}Val Losses: {val_losses_list}\n")
         f.write(

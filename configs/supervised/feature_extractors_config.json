@@ -25,16 +25,7 @@
         }
     },
     "resnet50": {
-        "output_size": 28,
-        "pretrained": true,
-        "freeze_feature_extractor": true,
-        "dropout_rate": 0.2,
-        "cv_grid_search":{
-            "output_size": [28, 56, 112]
-        }
-    },
-    "resnet101": {
-        "output_size": 28,
+        "output_size": 56,
         "pretrained": true,
         "freeze_feature_extractor": true,
         "dropout_rate": 0.2,

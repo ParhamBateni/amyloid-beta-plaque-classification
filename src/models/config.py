@@ -87,6 +87,7 @@ class Config:
             if os.path.exists(config_dir):
                 for file in os.listdir(config_dir):
                     file_name = file.split(".")[0]
+                    config = None
                     if os.path.isfile(os.path.join(config_dir, file)) and file.endswith(
                         ".json"
                     ):
