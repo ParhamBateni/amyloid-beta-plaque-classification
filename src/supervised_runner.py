@@ -14,20 +14,23 @@ from models.modules.supervised.feature_extractors.base_feature_extractor import 
 )
 from models.modules.supervised.classifiers.base_classifier import BaseClassifier
 import torch.nn as nn
-from utils.plotting_utils import save_loss_and_accuracy, plot_loss_and_accuracy
 from torchvision import transforms as trf
 from models.data.plaque_dataset import PlaqueDatasetAugmented
 from utils.logging_utils import StdoutRedirector
 
 from sklearn.model_selection import StratifiedKFold
 from tqdm import tqdm
-from report import (
+from utils import (
     generate_classification_report_df,
-    aggregate_classification_reports,
+    aggregate_reports,
     save_classification_report,
+    save_loss_and_accuracy,
+    plot_loss_and_accuracy,
+    plot_confusion_matrix,
 )
 from pytorch_lightning.loggers import CSVLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
+from sklearn.metrics import confusion_matrix as sklearn_confusion_matrix
 
 
 class SupervisedRunner(BaseRunner):
@@ -93,6 +96,15 @@ class SupervisedRunner(BaseRunner):
             folder_path=self.runs_folder,
             save=True,
         )
+        confusion_matrix = sklearn_confusion_matrix(
+            test_labels, test_preds, labels=list(self.config.name_to_label.values())
+        )
+        plot_confusion_matrix(
+            confusion_matrix,
+            self.config.name_to_label.keys(),
+            folder_path=self.runs_folder,
+            save=True,
+        )
 
         # Save classification report using common method
         classification_report_df = generate_classification_report_df(
@@ -130,6 +142,26 @@ class SupervisedRunner(BaseRunner):
             folder_path=self.runs_folder,
             name=f"kfold_train_val_training_report.txt",
         )
+        confusion_matrices = []
+        for test_labels, test_preds in zip(kfold_test_labels, kfold_test_preds):
+            confusion_matrix = sklearn_confusion_matrix(
+                test_labels, test_preds, labels=self.config.name_to_label.keys()
+            )
+            confusion_matrices.append(
+                pd.DataFrame(
+                    confusion_matrix,
+                    index=self.config.name_to_label.keys(),
+                    columns=self.config.name_to_label.keys(),
+                )
+            )
+        aggregated_confusion_matrix = aggregate_reports(confusion_matrices).to_numpy()
+        plot_confusion_matrix(
+            aggregated_confusion_matrix,
+            self.config.name_to_label.keys(),
+            folder_path=self.runs_folder,
+            save=True,
+        )
+
         classification_reports_df = []
         for test_labels, test_preds in zip(kfold_test_labels, kfold_test_preds):
             classification_reports_df.append(
@@ -137,7 +169,7 @@ class SupervisedRunner(BaseRunner):
                     test_labels, test_preds, self.config.name_to_label.keys()
                 )
             )
-        aggregated_classification_reports_df = aggregate_classification_reports(
+        aggregated_classification_reports_df = aggregate_reports(
             classification_reports_df
         )
         print("Aggregated classification report:")

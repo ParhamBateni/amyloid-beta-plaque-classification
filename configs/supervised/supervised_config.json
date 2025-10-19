@@ -1,11 +1,11 @@
 {
     "feature_extractor_name": "simple_cnn",
-    "classifier_name": "custom_mlp",
+    "classifier_name": "mlp",
     "data": {
-        "number_of_augmentations": 1
+        "number_of_augmentations": 3
     },
     "cv_grid_search": {
         "feature_extractor_name": ["simple_cnn", "resnet18", "resnet34"],
-        "classifier_name": ["custom_mlp", "deep_mlp"]
+        "classifier_name": ["linear"]
     }
 }

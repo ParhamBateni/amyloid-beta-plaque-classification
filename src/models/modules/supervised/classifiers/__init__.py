@@ -1,12 +1,9 @@
 from .base_classifier import BaseClassifier
-from .custom_mlp_classifier import CustomMLPClassifier
-
-# from .simple_mlp_classifier import SimpleMLPClassifier
-# from .deep_mlp_classifier import DeepMLPClassifier
+from .linear_classifier import LinearClassifier
+from .mlp_classifier import MLPClassifier
 
 __all__ = [
     "BaseClassifier",
-    "CustomMLPClassifier",
-    # 'SimpleMLPClassifier',
-    # 'DeepMLPClassifier'
+    "LinearClassifier",
+    "MLPClassifier",
 ]

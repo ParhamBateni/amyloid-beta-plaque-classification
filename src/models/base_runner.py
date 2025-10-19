@@ -18,6 +18,9 @@ class BaseRunner(ABC):
         if config.general_config.system.seed_everything:
             set_random_seeds(config.general_config.system.random_seed)
 
+        # Enable Tensor Core optimized matmul precision on supported GPUs
+        torch.set_float32_matmul_precision("medium")
+
         self.runs_folder = os.path.join(
             config.general_config.data.runs_folder, f"{self._type()}_{config.run_id}"
         )

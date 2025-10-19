@@ -107,3 +107,42 @@ def plot_loss_and_accuracy(
         plt.savefig(os.path.join(folder_path, "train_val_accuracy.png"))
     plt.show()
     plt.close()
+
+
+def plot_confusion_matrix(
+    confusion_matrix: np.ndarray,
+    label_names: List[str],
+    folder_path: str,
+    save: bool = True,
+) -> None:
+    """
+    Plot and save confusion matrix.
+    """
+    plt.figure(figsize=(10, 8))
+    im = plt.imshow(confusion_matrix, cmap="Blues")
+    plt.colorbar(im)
+
+    # Add text annotations for each cell
+    for i in range(confusion_matrix.shape[0]):
+        for j in range(confusion_matrix.shape[1]):
+            plt.text(
+                j,
+                i,
+                str(confusion_matrix[i, j]),
+                ha="center",
+                va="center",
+                color="black",
+                fontsize=10,
+            )
+
+    plt.xlabel("Predicted")
+    plt.ylabel("Real")
+    plt.title("Confusion Matrix")
+    plt.xticks(range(len(label_names)), label_names, rotation=45)
+    plt.yticks(range(len(label_names)), label_names)
+    if save:
+        plt.savefig(
+            os.path.join(folder_path, "confusion_matrix.png"), bbox_inches="tight"
+        )
+    plt.show()
+    plt.close()

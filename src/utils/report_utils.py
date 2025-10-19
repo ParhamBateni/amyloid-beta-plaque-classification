@@ -36,18 +36,18 @@ def save_classification_report(
     classification_report_df.to_csv(f"{folder_path}/classification_report.csv")
 
 
-def aggregate_classification_reports(
-    classification_report_dfs: List[pd.DataFrame], std_degree: int = 2, digits: int = 3
+def aggregate_reports(
+    report_dfs: List[pd.DataFrame], std_degree: int = 2, digits: int = 3
 ):
     """Aggregate classification reports from multiple runs."""
-    df_sum = classification_report_dfs[0].copy()
-    for df in classification_report_dfs[1:]:
+    df_sum = report_dfs[0].copy()
+    for df in report_dfs[1:]:
         df_sum += df
-    df_mean = df_sum / len(classification_report_dfs)
-    df_sum_sq = (classification_report_dfs[0].copy() - df_mean) ** 2
-    for df in classification_report_dfs[1:]:
+    df_mean = df_sum / len(report_dfs)
+    df_sum_sq = (report_dfs[0].copy() - df_mean) ** 2
+    for df in report_dfs[1:]:
         df_sum_sq += (df - df_mean) ** 2
-    df_std = np.sqrt(df_sum_sq / len(classification_report_dfs))
+    df_std = np.sqrt(df_sum_sq / len(report_dfs))
     df_aggregated = pd.DataFrame(
         df_mean, columns=df_mean.columns, index=df_mean.index, dtype=str
     )

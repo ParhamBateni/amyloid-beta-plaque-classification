@@ -64,19 +64,14 @@ class BaseClassifier(ABC, nn.Module):
             "output_size": output_size,
             **classifier_config,
         }
-        if classifier_name == "custom_mlp":
-            from .custom_mlp_classifier import CustomMLPClassifier
+        if classifier_name == "linear":
+            from .linear_classifier import LinearClassifier
 
-            return CustomMLPClassifier(**full_cfg)
-        elif classifier_name == "simple_mlp":
-            from .simple_mlp_classifier import SimpleMLPClassifier
+            return LinearClassifier(**full_cfg)
+        elif classifier_name == "mlp":
+            from .mlp_classifier import MLPClassifier
 
-            return SimpleMLPClassifier(**full_cfg)
-        elif classifier_name == "deep_mlp":
-            from .deep_mlp_classifier import DeepMLPClassifier
-
-            return DeepMLPClassifier(**full_cfg)
-        # TODO: Add more classifiers
+            return MLPClassifier(**full_cfg)
         else:
             raise ValueError(f"Classifier {classifier_name} not found")
 
