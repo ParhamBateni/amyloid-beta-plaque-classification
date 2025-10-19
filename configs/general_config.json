@@ -25,7 +25,7 @@
         "persistent_workers": true,
 
         "batch_size": 32,
-        "num_epochs": 100,
+        "num_epochs": 200,
         "optimizer": "adamw",
         "learning_rate": 1e-5,
         "weight_decay": 1e-5,

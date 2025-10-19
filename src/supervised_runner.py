@@ -61,7 +61,7 @@ class SupervisedRunner(BaseRunner):
             val_labeled_data_df,
             data_folder_path=data_folder_path,
             name_to_label=self.config.name_to_label,
-            transforms=train_transforms,
+            transforms=None,
             description="val labeled plaque images",
             normalize_data=self.config.general_config.data.normalize_data,
             normalize_mean=self.config.general_config.data.normalize_mean,
@@ -69,7 +69,7 @@ class SupervisedRunner(BaseRunner):
             use_extra_features=self.config.general_config.data.use_extra_features,
             downscaled_image_size=self.config.general_config.data.downscaled_image_size,
             downscaling_method=self.config.general_config.data.downscaling_method,
-            number_of_augmentations=self.config.supervised.supervised_config.data.number_of_augmentations,
+            number_of_augmentations=0,
         )
         test_labeled_plaque_dataset = PlaqueDatasetAugmented(
             test_labeled_data_df,
@@ -88,7 +88,7 @@ class SupervisedRunner(BaseRunner):
         train_labeled_dataloader = torch.utils.data.DataLoader(
             train_labeled_plaque_dataset,
             batch_size=self.config.general_config.training.batch_size,
-            shuffle=False,
+            shuffle=True,
             num_workers=self.config.general_config.training.num_workers,
             pin_memory=self.config.general_config.training.pin_memory,
             persistent_workers=self.config.general_config.training.persistent_workers,

@@ -57,7 +57,7 @@ class PlaqueDatasetAugmented(torch.utils.data.Dataset):
                 name_to_label=name_to_label,
                 transforms=trf.ToTensor(),
                 preload=preload,
-                apply_transforms_on_the_fly=True,
+                apply_transforms_on_the_fly=False,
                 description=description,
                 normalize_data=normalize_data,
                 normalize_mean=normalize_mean,
