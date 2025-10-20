@@ -4,6 +4,7 @@
 /data/
 /logs/
 /runs/*
+/best_results/*
 /garbage/
 
 __pycache__

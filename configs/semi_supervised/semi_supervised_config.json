@@ -1,6 +1,6 @@
 {
     "model_name": "pi_model",
-    "feature_extractor_name": "simple_cnn",
+    "feature_extractor_name": "resnet18",
     "classifier_name": "linear",
     "training": {
         "consistency_lambda_max": 0.2,
