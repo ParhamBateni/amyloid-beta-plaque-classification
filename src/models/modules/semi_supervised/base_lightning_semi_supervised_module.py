@@ -21,7 +21,7 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         optimizer: Callable[[Iterable[torch.nn.Parameter]], torch.optim.Optimizer],
         optimizer_kwargs: dict = {},
         use_extra_features: bool = False,
-        consistency_lambda_start: float = 0.5,
+        consistency_lambda_max: float = 0.5,
         consistency_loss_type: str = "mse",
         ramp_up_epochs: int = 10,
         ramp_up_function: str = "linear",
@@ -35,7 +35,7 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
                 "optimizer": str(optimizer),
                 "optimizer_kwargs": optimizer_kwargs,
                 "use_extra_features": use_extra_features,
-                "consistency_lambda_start": consistency_lambda_start,
+                "consistency_lambda_max": consistency_lambda_max,
                 "consistency_loss_type": consistency_loss_type,
                 "ramp_up_epochs": ramp_up_epochs,
                 "ramp_up_function": ramp_up_function,
@@ -44,8 +44,8 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         self.feature_extractor = feature_extractor
         self.classifier = classifier
         self.use_extra_features = use_extra_features
-        self.consistency_lambda_start = consistency_lambda_start
-        self.consistency_lambda = consistency_lambda_start
+        self.consistency_lambda_max = consistency_lambda_max
+        self.consistency_lambda = 0
         self.consistency_loss_type = consistency_loss_type
         self.ramp_up_epochs = ramp_up_epochs
         self.ramp_up_function = ramp_up_function
@@ -152,7 +152,7 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
     def on_train_epoch_start(self):
         """Log ramp-up weight at start of each epoch."""
         ramp_up_weight = self._get_ramp_up_weight(self.current_epoch)
-        self.consistency_lambda = self.consistency_lambda_start * ramp_up_weight
+        self.consistency_lambda = self.consistency_lambda_max * ramp_up_weight
         self.log("ramp_up_weight", ramp_up_weight, prog_bar=True)
         self.log("consistency_lambda", self.consistency_lambda, prog_bar=True)
 

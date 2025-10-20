@@ -5,7 +5,7 @@ import os
 import torch
 from utils.data_utils import load_data_df
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, TQDMProgressBar
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, RichProgressBar
 import torch
 from utils.seed_utils import set_random_seeds
 from typing import List
@@ -99,7 +99,7 @@ class BaseRunner(ABC):
                 )
             )
         # Progress bar
-        callbacks.append(TQDMProgressBar(refresh_rate=1, leave=True))
+        callbacks.append(RichProgressBar(refresh_rate=1, leave=True))
 
         enable_checkpointing = False
         for callback in callbacks:

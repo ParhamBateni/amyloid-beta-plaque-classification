@@ -308,7 +308,7 @@ class SemiSupervisedRunner(BaseRunner):
             optimizer=optimizer,
             optimizer_kwargs=optimizer_kwargs,
             use_extra_features=self.config.general_config.data.use_extra_features,
-            consistency_lambda_start=semi_supervised_config.training.consistency_lambda_start,
+            consistency_lambda_max=semi_supervised_config.training.consistency_lambda_max,
             consistency_loss_type=semi_supervised_config.training.consistency_loss_type,
             ramp_up_epochs=semi_supervised_config.training.ramp_up_epochs,
             ramp_up_function=semi_supervised_config.training.ramp_up_function,

@@ -81,10 +81,16 @@ def plot_loss_and_accuracy(
         val_accuracies = np.mean(np.array(val_accuracies), axis=0)
         averaged = True
 
+    train_size = len(train_losses)
+    val_size = len(val_losses)
     # Plot Losses
     plt.figure(figsize=(10, 5))
     plt.plot(train_losses, label=f"{'Averaged ' if averaged else ''}Train Loss")
-    plt.plot(val_losses, label=f"{'Averaged ' if averaged else ''}Val Loss")
+    plt.plot(
+        np.arange(0, train_size, train_size / val_size),
+        val_losses,
+        label=f"{'Averaged ' if averaged else ''}Val Loss",
+    )
     plt.legend()
     plt.title(f"{'Averaged ' if averaged else ''}Train and Val Loss Over Epochs")
     plt.xlabel("Epoch")
@@ -94,10 +100,16 @@ def plot_loss_and_accuracy(
     plt.show()
     plt.close()
 
+    train_size = len(train_accuracies)
+    val_size = len(val_accuracies)
     # Plot Accuracies
     plt.figure(figsize=(10, 5))
     plt.plot(train_accuracies, label=f"{'Averaged ' if averaged else ''}Train Accuracy")
-    plt.plot(val_accuracies, label=f"{'Averaged ' if averaged else ''}Val Accuracy")
+    plt.plot(
+        np.arange(0, train_size, train_size / val_size),
+        val_accuracies,
+        label=f"{'Averaged ' if averaged else ''}Val Accuracy",
+    )
     plt.legend()
     plt.title(f"{'Averaged ' if averaged else ''}Train and Val Accuracy Over Epochs")
     plt.xlabel("Epoch")
