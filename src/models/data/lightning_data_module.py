@@ -55,14 +55,12 @@ class SemiSupervisedPlaqueLightningDataModule(pl.LightningDataModule):
         val_labeled_plaque_dataloader: torch.utils.data.DataLoader,
         test_labeled_plaque_dataloader: torch.utils.data.DataLoader,
         train_unlabeled_plaque_dataloader: torch.utils.data.DataLoader,
-        val_unlabeled_plaque_dataloader: torch.utils.data.DataLoader,
     ):
         super().__init__()
         self.train_labeled_plaque_dataloader = train_labeled_plaque_dataloader
         self.val_labeled_plaque_dataloader = val_labeled_plaque_dataloader
         self.test_labeled_plaque_dataloader = test_labeled_plaque_dataloader
         self.train_unlabeled_plaque_dataloader = train_unlabeled_plaque_dataloader
-        self.val_unlabeled_plaque_dataloader = val_unlabeled_plaque_dataloader
 
     def setup(self, stage: Optional[str] = None):
         pass
@@ -75,11 +73,7 @@ class SemiSupervisedPlaqueLightningDataModule(pl.LightningDataModule):
         # Return both loaders to ensure uniform sampling via Lightning's multi-train-dataloader support
 
     def val_dataloader(self):
-        return [
-            self.val_labeled_plaque_dataloader,
-            self.val_unlabeled_plaque_dataloader,
-        ]
-        # Return both loaders to ensure uniform sampling via Lightning's multi-val-dataloader support
+        return self.val_labeled_plaque_dataloader
 
     def test_dataloader(self):
-        return [self.test_labeled_plaque_dataloader]
+        return self.test_labeled_plaque_dataloader

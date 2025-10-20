@@ -1,9 +1,6 @@
 {
-    "feature_extractor_name": "simple_cnn",
-    "classifier_name": "mlp",
-    "data": {
-        "number_of_augmentations": 3
-    },
+    "feature_extractor_name": "resnet18",
+    "classifier_name": "linear",
     "cv_grid_search": {
         "feature_extractor_name": ["simple_cnn", "resnet18", "resnet34"],
         "classifier_name": ["linear"]

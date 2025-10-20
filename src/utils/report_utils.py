@@ -37,7 +37,10 @@ def save_classification_report(
 
 
 def aggregate_reports(
-    report_dfs: List[pd.DataFrame], std_degree: int = 2, digits: int = 3
+    report_dfs: List[pd.DataFrame],
+    std_degree: int = 2,
+    digits: int = 3,
+    include_std: bool = True,
 ):
     """Aggregate classification reports from multiple runs."""
     df_sum = report_dfs[0].copy()
@@ -48,16 +51,21 @@ def aggregate_reports(
     for df in report_dfs[1:]:
         df_sum_sq += (df - df_mean) ** 2
     df_std = np.sqrt(df_sum_sq / len(report_dfs))
-    df_aggregated = pd.DataFrame(
-        df_mean, columns=df_mean.columns, index=df_mean.index, dtype=str
-    )
-    for i in range(len(df_aggregated)):
-        for j in range(len(df_aggregated.columns)):
-            df_aggregated.iloc[i, j] = (
-                str(np.round(df_mean.iloc[i, j], digits))
-                + " ± "
-                + str(np.round(std_degree * df_std.iloc[i, j], digits))
-            )
+    if include_std:
+        df_aggregated = pd.DataFrame(
+            df_mean, columns=df_mean.columns, index=df_mean.index, dtype=str
+        )
+        for i in range(len(df_aggregated)):
+            for j in range(len(df_aggregated.columns)):
+                df_aggregated.iloc[i, j] = (
+                    str(np.round(df_mean.iloc[i, j], digits))
+                    + " ± "
+                    + str(np.round(std_degree * df_std.iloc[i, j], digits))
+                )
+    else:
+        df_aggregated = pd.DataFrame(
+            df_mean, columns=df_mean.columns, index=df_mean.index, dtype=float
+        )
     return df_aggregated
 
 

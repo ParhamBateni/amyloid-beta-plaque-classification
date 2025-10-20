@@ -132,19 +132,6 @@ class Config:
         if train_mode == "supervised":
             del config.self_supervised
             del config.semi_supervised
-            config.supervised.supervised_config.feature_extractor_config = Config(
-                config.supervised.feature_extractors_config[
-                    config.supervised.supervised_config.feature_extractor_name
-                ].to_dict()
-            )
-            config.supervised.supervised_config.classifier_config = Config(
-                config.supervised.classifiers_config[
-                    config.supervised.supervised_config.classifier_name
-                ].to_dict()
-            )
-            del config.supervised.feature_extractors_config
-            del config.supervised.classifiers_config
-
         elif train_mode == "semi_supervised":
             del config.supervised
             del config.self_supervised

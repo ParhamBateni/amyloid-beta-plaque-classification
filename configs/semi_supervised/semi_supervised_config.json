@@ -1,8 +1,19 @@
 {
-    "feature_extractor": "simple_cnn",
-    "classifier": "custom_mlp",
-    "semi_supervised": {
-        "unlabeled_weight": 0.1,
-        "consistency_weight": 1.0
+    "model_name": "pi_model",
+    "feature_extractor_name": "simple_cnn",
+    "classifier_name": "linear",
+    "training": {
+        "consistency_lambda_start": 0.5,
+        "consistency_loss_type": "mse",
+        "ramp_up_epochs": 10,
+        "ramp_up_function": "linear"
+    },
+    "cv_grid_search": {
+        "feature_extractor_name": ["simple_cnn", "resnet18", "resnet34"],
+        "classifier_name": ["linear"],
+        "consistency_lambda_start": [0.1, 0.5, 1.0],
+        "consistency_loss_type": ["mse", "kl"],
+        "ramp_up_epochs": [5, 10, 15],
+        "ramp_up_function": ["linear", "sigmoid"]
     }
 }

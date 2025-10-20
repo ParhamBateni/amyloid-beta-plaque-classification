@@ -124,10 +124,11 @@ class BaseRunner(ABC):
             from supervised_runner import SupervisedRunner
 
             return SupervisedRunner(config)
-        elif train_mode == "semi-supervised":
-            pass
-            # return SemiSupervisedRunner(config)
-        elif train_mode == "self-supervised":
+        elif train_mode == "semi_supervised":
+            from semi_supervised_runner import SemiSupervisedRunner
+
+            return SemiSupervisedRunner(config)
+        elif train_mode == "self_supervised":
             pass
             # return SelfSupervisedRunner(config)
         else:

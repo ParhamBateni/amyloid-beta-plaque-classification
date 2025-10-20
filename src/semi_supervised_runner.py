@@ -5,10 +5,10 @@ import os
 import torch
 import pandas as pd
 import pytorch_lightning as pl
-from models.modules.supervised.lightning_supervised_module import (
-    LightningSupervisedModule,
+from models.modules.semi_supervised.pi_model_lightning_module import (
+    PiModelLightningModule,
 )
-from models.data.lightning_data_module import SupervisedPlaqueLightningDataModule
+from models.data.lightning_data_module import SemiSupervisedPlaqueLightningDataModule
 from models.modules.supervised.feature_extractors.base_feature_extractor import (
     BaseFeatureExtractor,
 )
@@ -31,13 +31,21 @@ from utils import (
 from pytorch_lightning.loggers import CSVLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
 from sklearn.metrics import confusion_matrix as sklearn_confusion_matrix
+from models.data.plaque_dataset import PlaqueDataset
+from models.modules.semi_supervised.base_lightning_semi_supervised_module import (
+    BaseLightningSemiSupervisedModule,
+)
 
 
-class SupervisedRunner(BaseRunner):
+class SemiSupervisedRunner(BaseRunner):
+    """Runner for semi-supervised learning experiments."""
+
     def __init__(self, config: Config):
         super().__init__(config)
 
     def run_single_experiment(self):
+        """Run a single semi-supervised experiment."""
+        # Split labeled data
         train_labeled_data_df, test_labeled_data_df = train_test_split(
             self.labeled_data_df,
             test_size=self.config.general_config.training.test_size,
@@ -48,6 +56,8 @@ class SupervisedRunner(BaseRunner):
             test_size=self.config.general_config.training.val_size,
             stratify=train_labeled_data_df["Label"],
         )
+
+        # Create trainer
         trainer = self._create_base_trainer(
             callbacks=[
                 ModelCheckpoint(
@@ -79,8 +89,11 @@ class SupervisedRunner(BaseRunner):
                 train_labeled_data_df=train_labeled_data_df,
                 val_labeled_data_df=val_labeled_data_df,
                 test_labeled_data_df=test_labeled_data_df,
+                unlabeled_data_df=self.unlabeled_data_df,
                 trainer=trainer,
             )
+
+        # Save results
         save_loss_and_accuracy(
             train_losses,
             val_losses,
@@ -106,7 +119,7 @@ class SupervisedRunner(BaseRunner):
             save=True,
         )
 
-        # Save classification report using common method
+        # Save classification report
         classification_report_df = generate_classification_report_df(
             test_labels, test_preds, self.config.name_to_label.keys()
         )
@@ -117,6 +130,7 @@ class SupervisedRunner(BaseRunner):
         )
 
     def cross_validate(self):
+        """Run cross-validation for semi-supervised learning."""
         with StdoutRedirector(
             os.path.join(self.runs_folder, "cross_validate_output.log")
         ):
@@ -134,6 +148,8 @@ class SupervisedRunner(BaseRunner):
             best_trainer.save_checkpoint(
                 os.path.join(self.runs_folder, "best_model_cv.ckpt")
             )
+
+        # Save results
         save_loss_and_accuracy(
             kfold_train_losses,
             kfold_val_losses,
@@ -142,6 +158,8 @@ class SupervisedRunner(BaseRunner):
             folder_path=self.runs_folder,
             name=f"kfold_train_val_training_report.txt",
         )
+
+        # Confusion matrices
         confusion_matrices = []
         for test_labels, test_preds in zip(kfold_test_labels, kfold_test_preds):
             confusion_matrix = sklearn_confusion_matrix(
@@ -164,6 +182,7 @@ class SupervisedRunner(BaseRunner):
             save=True,
         )
 
+        # Classification reports
         classification_reports_df = []
         for test_labels, test_preds in zip(kfold_test_labels, kfold_test_preds):
             classification_reports_df.append(
@@ -181,23 +200,16 @@ class SupervisedRunner(BaseRunner):
         )
 
     def optimize_hyperparameters(self):
-        pass
+        """Optimize hyperparameters for semi-supervised learning."""
 
     def load_model_from_checkpoint(self, checkpoint_path: str, device: str = "cpu"):
-        """
-        Load a model from checkpoint with automatic feature extractor and classifier creation.
+        """Load a semi-supervised model from checkpoint, auto-initializing components from config."""
+        # TODO: This function is not used yet, so it is not implemented.
 
-        Args:
-            checkpoint_path: Path to the checkpoint file
-            device: Device to load model on
-
-        Returns:
-            Loaded Lightning module ready for inference
-        """
-        # Load checkpoint to get hyperparameters
+        # Load checkpoint
         checkpoint = torch.load(checkpoint_path, map_location=device)
 
-        # Create feature extractor and classifier using parent methods
+        # Create feature extractor and classifier using the refactored logic
         feature_extractor = self._create_feature_extractor_from_config()
         classifier = self._create_classifier_from_config(
             feature_extractor.output_size
@@ -208,22 +220,31 @@ class SupervisedRunner(BaseRunner):
             )
         )
 
-        # Create criterion and optimizer using parent methods
+        # Other Pi-Model components
         criterion = nn.CrossEntropyLoss()
         optimizer = self._create_base_optimizer()
         optimizer_kwargs = self._get_base_optimizer_kwargs()
 
-        # Create model
-        model = LightningSupervisedModule(
+        # Retrieve semi-supervised config
+        semi_supervised_config = self.config.semi_supervised.semi_supervised_config
+
+        # Build PiModelLightningModule using config-driven structure
+        model = PiModelLightningModule(
             feature_extractor=feature_extractor,
             classifier=classifier,
             criterion=criterion,
             optimizer=optimizer,
             optimizer_kwargs=optimizer_kwargs,
             use_extra_features=self.config.general_config.data.use_extra_features,
+            consistency_lambda=semi_supervised_config.data.consistency_lambda,
+            weak_augmentation_strength=semi_supervised_config.data.weak_augmentation_strength,
+            strong_augmentation_strength=semi_supervised_config.data.strong_augmentation_strength,
+            consistency_loss_type=semi_supervised_config.training.consistency_loss_type,
+            ramp_up_epochs=semi_supervised_config.training.ramp_up_epochs,
+            ramp_up_function=semi_supervised_config.training.ramp_up_function,
         )
 
-        # Load state dict
+        # Restore weights to model
         model.load_state_dict(checkpoint["state_dict"])
         model.eval()
         model.to(device)
@@ -231,9 +252,11 @@ class SupervisedRunner(BaseRunner):
         print(f"Model loaded from: {checkpoint_path}")
         print(f"Model type: {self._type()}")
         print(
-            f"Feature extractor: {self.config.supervised.supervised_config.feature_extractor_name}"
+            f"Feature extractor: {self.config.semi_supervised.semi_supervised_config.feature_extractor_name}"
         )
-        print(f"Classifier: {self.config.supervised.supervised_config.classifier_name}")
+        print(
+            f"Classifier: {self.config.semi_supervised.semi_supervised_config.classifier_name}"
+        )
         print(f"Device: {device}")
 
         return model
@@ -243,13 +266,24 @@ class SupervisedRunner(BaseRunner):
         train_labeled_data_df: pd.DataFrame,
         val_labeled_data_df: pd.DataFrame,
         test_labeled_data_df: pd.DataFrame,
+        unlabeled_data_df: pd.DataFrame,
         trainer: pl.Trainer,
     ):
-        train_labeled_dataloader, val_labeled_dataloader, test_labeled_dataloader = (
-            self._load_dataloaders(
-                train_labeled_data_df, val_labeled_data_df, test_labeled_data_df
-            )
+        """Run a single semi-supervised experiment."""
+        # Create dataloaders
+        (
+            train_labeled_dataloader,
+            val_labeled_dataloader,
+            test_labeled_dataloader,
+            train_unlabeled_dataloader,
+        ) = self._load_dataloaders(
+            train_labeled_data_df,
+            val_labeled_data_df,
+            test_labeled_data_df,
+            unlabeled_data_df,
         )
+
+        # Create model components
         feature_extractor = self._create_feature_extractor_from_config()
         classifier = self._create_classifier_from_config(
             feature_extractor.output_size
@@ -263,23 +297,35 @@ class SupervisedRunner(BaseRunner):
         optimizer = self._create_base_optimizer()
         optimizer_kwargs = self._get_base_optimizer_kwargs()
 
-        pl_module = LightningSupervisedModule(
+        # Get semi-supervised config
+        semi_supervised_config = self.config.semi_supervised.semi_supervised_config
+
+        pl_module = BaseLightningSemiSupervisedModule.create_semi_supervised_module(
+            name=semi_supervised_config.model_name,
             feature_extractor=feature_extractor,
             classifier=classifier,
             criterion=criterion,
             optimizer=optimizer,
             optimizer_kwargs=optimizer_kwargs,
             use_extra_features=self.config.general_config.data.use_extra_features,
+            consistency_lambda_start=semi_supervised_config.training.consistency_lambda_start,
+            consistency_loss_type=semi_supervised_config.training.consistency_loss_type,
+            ramp_up_epochs=semi_supervised_config.training.ramp_up_epochs,
+            ramp_up_function=semi_supervised_config.training.ramp_up_function,
         )
 
-        data_module = SupervisedPlaqueLightningDataModule(
+        # Create data module
+        data_module = SemiSupervisedPlaqueLightningDataModule(
             train_labeled_plaque_dataloader=train_labeled_dataloader,
             val_labeled_plaque_dataloader=val_labeled_dataloader,
             test_labeled_plaque_dataloader=test_labeled_dataloader,
+            train_unlabeled_plaque_dataloader=train_unlabeled_dataloader,
         )
-        trainer.fit(pl_module, datamodule=data_module)
 
+        # Train and test
+        trainer.fit(pl_module, datamodule=data_module)
         trainer.test(pl_module, datamodule=data_module)
+
         return (
             pl_module.train_losses,
             pl_module.val_losses,
@@ -290,6 +336,7 @@ class SupervisedRunner(BaseRunner):
         )
 
     def _cross_validate(self):
+        """Run cross-validation for semi-supervised learning."""
         kfold = StratifiedKFold(
             n_splits=self.config.general_config.training.cv_folds, shuffle=True
         )
@@ -301,6 +348,7 @@ class SupervisedRunner(BaseRunner):
         kfold_test_preds = []
         best_val_loss = float("inf")
         best_trainer = None
+
         for fold, (train_idx, test_idx) in tqdm(
             enumerate(kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
             total=self.config.general_config.training.cv_folds,
@@ -313,6 +361,7 @@ class SupervisedRunner(BaseRunner):
                 test_size=self.config.general_config.training.val_size,
                 stratify=train_labeled_data_df["Label"],
             )
+
             trainer = self._create_base_trainer()
             (
                 train_losses,
@@ -325,6 +374,7 @@ class SupervisedRunner(BaseRunner):
                 train_labeled_data_df=train_labeled_data_df,
                 val_labeled_data_df=val_labeled_data_df,
                 test_labeled_data_df=test_labeled_data_df,
+                unlabeled_data_df=self.unlabeled_data_df,
                 trainer=trainer,
             )
 
@@ -332,7 +382,6 @@ class SupervisedRunner(BaseRunner):
             if val_losses[-1] < best_val_loss:
                 best_val_loss = val_losses[-1]
                 best_trainer = trainer
-                # The model is already saved in the fold folder, we'll copy it later
 
             kfold_train_losses.append(train_losses[-1])
             kfold_val_losses.append(val_losses[-1])
@@ -352,32 +401,53 @@ class SupervisedRunner(BaseRunner):
         )
 
     def _type(self) -> str:
-        return f"supervised_{self.config.supervised.supervised_config.feature_extractor_name}_{self.config.supervised.supervised_config.classifier_name}"
+        """Return model type string."""
+        semi_supervised_config = self.config.semi_supervised.semi_supervised_config
+        return f"semi_supervised_{semi_supervised_config.model_name}_{semi_supervised_config.feature_extractor_name}_{semi_supervised_config.classifier_name}"
 
     def _load_dataloaders(
         self,
         train_labeled_data_df: pd.DataFrame,
         val_labeled_data_df: pd.DataFrame,
         test_labeled_data_df: pd.DataFrame,
+        unlabeled_data_df: pd.DataFrame,
     ):
-        data_folder_path = os.path.join(
+        """Load dataloaders for semi-supervised learning."""
+        labeled_data_folder_path = os.path.join(
             self.config.general_config.data.data_folder,
             self.config.general_config.data.labeled_data_folder,
         )
-        train_transforms = trf.Compose(
+        unlabeled_data_folder_path = os.path.join(
+            self.config.general_config.data.data_folder,
+            self.config.general_config.data.unlabeled_data_folder,
+        )
+
+        # Training transforms (strong augmentations for consistency)
+        # TODO: Chant
+        # Weak augmentation: minimal changes (slight flip & normalization)
+        weak_transforms = trf.Compose(
+            [
+                trf.RandomHorizontalFlip(p=0.3),  # Less frequent flips
+                trf.ToTensor(),
+            ]
+        )
+        # Strong augmentation: more aggressive (flips, color jitter, rotation, normalization)
+        strong_transforms = trf.Compose(
             [
                 trf.RandomHorizontalFlip(p=0.5),
                 trf.RandomVerticalFlip(p=0.5),
-                trf.RandomRotation(degrees=(0, 90)),
-                trf.ColorJitter(brightness=0.2, contrast=0.2),
+                trf.RandomRotation(degrees=45),  # Stronger random rotation
+                trf.ColorJitter(
+                    brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1
+                ),  # More intense
                 trf.ToTensor(),
             ]
         )
         train_labeled_plaque_dataset = PlaqueDatasetAugmented(
             train_labeled_data_df,
-            data_folder_path=data_folder_path,
+            data_folder_path=labeled_data_folder_path,
             name_to_label=self.config.name_to_label,
-            transforms=train_transforms,
+            transforms=strong_transforms,
             description="train labeled plaque images",
             normalize_data=self.config.general_config.data.normalize_data,
             normalize_mean=self.config.general_config.data.normalize_mean,
@@ -387,9 +457,10 @@ class SupervisedRunner(BaseRunner):
             downscaling_method=self.config.general_config.data.downscaling_method,
             number_of_augmentations=self.config.general_config.data.number_of_augmentations,
         )
+
         val_labeled_plaque_dataset = PlaqueDatasetAugmented(
             val_labeled_data_df,
-            data_folder_path=data_folder_path,
+            data_folder_path=labeled_data_folder_path,
             name_to_label=self.config.name_to_label,
             transforms=None,
             description="val labeled plaque images",
@@ -401,9 +472,10 @@ class SupervisedRunner(BaseRunner):
             downscaling_method=self.config.general_config.data.downscaling_method,
             number_of_augmentations=0,
         )
+
         test_labeled_plaque_dataset = PlaqueDatasetAugmented(
             test_labeled_data_df,
-            data_folder_path=data_folder_path,
+            data_folder_path=labeled_data_folder_path,
             name_to_label=self.config.name_to_label,
             transforms=None,
             description="test labeled plaque images",
@@ -415,6 +487,22 @@ class SupervisedRunner(BaseRunner):
             downscaling_method=self.config.general_config.data.downscaling_method,
             number_of_augmentations=0,
         )
+
+        train_unlabeled_plaque_dataset = PlaqueDataset(
+            unlabeled_data_df,
+            data_folder_path=unlabeled_data_folder_path,
+            name_to_label=self.config.name_to_label,
+            transforms=[weak_transforms, strong_transforms],
+            description="train unlabeled plaque images",
+            normalize_data=self.config.general_config.data.normalize_data,
+            normalize_mean=self.config.general_config.data.normalize_mean,
+            normalize_std=self.config.general_config.data.normalize_std,
+            use_extra_features=self.config.general_config.data.use_extra_features,
+            downscaled_image_size=self.config.general_config.data.downscaled_image_size,
+            downscaling_method=self.config.general_config.data.downscaling_method,
+        )
+
+        # Create dataloaders
         train_labeled_dataloader = torch.utils.data.DataLoader(
             train_labeled_plaque_dataset,
             batch_size=self.config.general_config.training.batch_size,
@@ -423,6 +511,7 @@ class SupervisedRunner(BaseRunner):
             pin_memory=self.config.general_config.training.pin_memory,
             persistent_workers=self.config.general_config.training.persistent_workers,
         )
+
         val_labeled_dataloader = torch.utils.data.DataLoader(
             val_labeled_plaque_dataset,
             batch_size=self.config.general_config.training.batch_size,
@@ -431,6 +520,7 @@ class SupervisedRunner(BaseRunner):
             pin_memory=self.config.general_config.training.pin_memory,
             persistent_workers=self.config.general_config.training.persistent_workers,
         )
+
         test_labeled_dataloader = torch.utils.data.DataLoader(
             test_labeled_plaque_dataset,
             batch_size=self.config.general_config.training.batch_size,
@@ -439,29 +529,44 @@ class SupervisedRunner(BaseRunner):
             pin_memory=self.config.general_config.training.pin_memory,
             persistent_workers=self.config.general_config.training.persistent_workers,
         )
+
+        train_unlabeled_dataloader = torch.utils.data.DataLoader(
+            train_unlabeled_plaque_dataset,
+            batch_size=self.config.general_config.training.batch_size,
+            shuffle=True,
+            num_workers=self.config.general_config.training.num_workers,
+            pin_memory=self.config.general_config.training.pin_memory,
+            persistent_workers=self.config.general_config.training.persistent_workers,
+        )
+
         return (
             train_labeled_dataloader,
             val_labeled_dataloader,
             test_labeled_dataloader,
+            train_unlabeled_dataloader,
         )
 
     def _create_feature_extractor_from_config(self) -> BaseFeatureExtractor:
-        """Create feature extractor based on config."""
+        """Create feature extractor based on semi-supervised config."""
+        semi_supervised_config = self.config.semi_supervised.semi_supervised_config
+        feature_extractor_config = self.config.architectures.feature_extractors_config[
+            semi_supervised_config.feature_extractor_name
+        ]
         return BaseFeatureExtractor.create_feature_extractor(
-            feature_extractor_name=self.config.supervised.supervised_config.feature_extractor_name,
+            feature_extractor_name=semi_supervised_config.feature_extractor_name,
             input_dim=self.config.general_config.data.downscaled_image_size,
-            feature_extractor_config=self.config.architectures.feature_extractors_config[
-                self.config.supervised.supervised_config.feature_extractor_name
-            ].to_dict(),
+            feature_extractor_config=feature_extractor_config.to_dict(),
         )
 
     def _create_classifier_from_config(self, input_size: int) -> BaseClassifier:
-        """Create classifier based on config."""
+        """Create classifier based on semi-supervised config."""
+        semi_supervised_config = self.config.semi_supervised.semi_supervised_config
+        classifier_config = self.config.architectures.classifiers_config[
+            semi_supervised_config.classifier_name
+        ]
         return BaseClassifier.create_classifier(
-            classifier_name=self.config.supervised.supervised_config.classifier_name,
+            classifier_name=semi_supervised_config.classifier_name,
             input_size=input_size,
             output_size=len(self.config.label_to_name),
-            classifier_config=self.config.architectures.classifiers_config[
-                self.config.supervised.supervised_config.classifier_name
-            ].to_dict(),
+            classifier_config=classifier_config.to_dict(),
         )

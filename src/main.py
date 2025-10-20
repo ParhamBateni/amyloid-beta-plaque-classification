@@ -18,7 +18,7 @@ if __name__ == "__main__":
         "--train_mode",
         type=str,
         default="supervised",
-        choices=["supervised", "semisupervised", "unsupervised"],
+        choices=["supervised", "semi_supervised", "self_supervised"],
         help="Training mode to use",
     )
     parser.add_argument(
