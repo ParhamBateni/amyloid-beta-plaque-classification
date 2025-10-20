@@ -6,6 +6,7 @@
 /runs/*
 /best_results/*
 /garbage/
+/batch_scripts/*
 
 __pycache__
 *.out
