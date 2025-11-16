@@ -205,6 +205,7 @@ class SemiSupervisedRunner(BaseRunner):
     def optimize_hyperparameters(self):
         """Optimize hyperparameters for semi-supervised learning."""
 
+    # TODO: This function is not used yet, so it is not implemented.
     def load_model_from_checkpoint(self, checkpoint_path: str, device: str = "cpu"):
         """Load a semi-supervised model from checkpoint, auto-initializing components from config."""
         # TODO: This function is not used yet, so it is not implemented.
@@ -430,14 +431,19 @@ class SemiSupervisedRunner(BaseRunner):
         )
 
         # Training transforms (strong augmentations for consistency)
-        # TODO: Chant
+        # TODO: Find the best augmentations later.
         # Weak augmentation: minimal changes (slight flip & normalization)
-        weak_transforms = trf.Compose(
-            [
-                trf.RandomHorizontalFlip(p=0.3),  # Less frequent flips
-                trf.ToTensor(),
-            ]
-        )
+        # weak_transforms = trf.Compose(
+        #     [
+        #         trf.RandomHorizontalFlip(p=0.3),  # Less frequent flips
+        #         trf.ToTensor(),
+        #     ]
+        # )
+        weak_transforms = trf.Compose([
+            trf.RandomHorizontalFlip(),
+            trf.RandomCrop(size=32, padding=4),
+            trf.ToTensor(),
+        ])
         # Strong augmentation: more aggressive (flips, color jitter, rotation, normalization)
         # strong_transforms = trf.Compose(
         #     [
@@ -450,20 +456,24 @@ class SemiSupervisedRunner(BaseRunner):
         #         trf.ToTensor(),
         #     ]
         # )
-        strong_transforms = trf.Compose(
-            [
-                trf.RandomHorizontalFlip(p=0.5),
-                trf.RandomVerticalFlip(p=0.5),
-                trf.RandomRotation(degrees=(0, 90)),
-                trf.ColorJitter(brightness=0.2, contrast=0.2),
-                trf.ToTensor(),
-            ]
-        )
+        # strong_transforms = trf.Compose(
+        #     [
+        #         trf.RandomHorizontalFlip(p=0.5),
+        #         trf.RandomVerticalFlip(p=0.5),
+        #         trf.RandomRotation(degrees=(0, 90)),
+        #         trf.ColorJitter(brightness=0.2, contrast=0.2),
+        #         trf.ToTensor(),
+        #     ]
+        # )
+        strong_transforms = trf.Compose([
+            trf.RandAugment(num_ops=2, magnitude=10),
+            trf.ToTensor(),
+        ])
         train_labeled_plaque_dataset = PlaqueDatasetAugmented(
             train_labeled_data_df,
             data_folder_path=labeled_data_folder_path,
             name_to_label=self.config.name_to_label,
-            transforms=strong_transforms,
+            transforms=weak_transforms,
             description="train labeled plaque images",
             normalize_data=self.config.general_config.data.normalize_data,
             normalize_mean=self.config.general_config.data.normalize_mean,
