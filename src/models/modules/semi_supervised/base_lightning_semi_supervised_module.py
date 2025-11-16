@@ -60,10 +60,6 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         self.train_accuracies = []
         self.val_accuracies = []
 
-        # For test-time reporting
-        self.test_labels = []
-        self.test_preds = []
-
         # Batch tracking
         self._train_loss_sum = 0.0
         self._train_correct = 0
@@ -72,6 +68,7 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         self._val_correct = 0
         self._val_count = 0
         self._test_loss_sum = 0.0
+        self._test_correct = 0
         self._test_count = 0
 
     @abstractmethod
@@ -140,7 +137,9 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         output_log_probs = F.log_softmax(outputs, dim=1)
         target_probs = F.softmax(targets, dim=1)
         if self.consistency_loss_type == "mse":
-            return F.mse_loss(output_log_probs, target_probs, reduction="mean" if reduce else None)
+            return F.mse_loss(
+                output_log_probs, target_probs, reduction="mean" if reduce else None
+            )
         elif self.consistency_loss_type == "kl":
             return F.kl_div(
                 output_log_probs,
@@ -148,7 +147,9 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
                 reduction="batchmean" if reduce else None,
             )
         elif self.consistency_loss_type == "cross_entropy":
-            return F.cross_entropy(outputs, target_probs, reduction="mean" if reduce else None)
+            return F.cross_entropy(
+                outputs, target_probs, reduction="mean" if reduce else None
+            )
         else:
             raise ValueError(
                 f"Unknown consistency loss type: {self.consistency_loss_type}"
@@ -249,32 +250,16 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
 
     def test_step(self, batch: Any, batch_idx: int):
         """Test step using only labeled data."""
-        (
-            _image_paths,
-            normalized_transformed_image_tensors,
-            extra_features,
-            labels,
-        ) = batch
-        outputs = self(
-            normalized_transformed_image_tensors,
-            extra_features if self.use_extra_features else None,
-        )
-        preds = torch.argmax(outputs, dim=1)
-        self.test_labels.extend(labels.cpu().tolist())
-        self.test_preds.extend(preds.cpu().tolist())
-        loss = self.criterion(outputs, labels)
+        loss, correct, count = self._step_common(batch)
+        self._test_correct += correct
+        self._test_count += count
         self._test_loss_sum += float(loss.item())
-        self._test_count += labels.size(0)
 
     def on_test_epoch_end(self):
         """Log test metrics at end of epoch."""
         avg_loss = self._test_loss_sum / max(1, self._test_count)
-        if len(self.test_labels) > 0:
-            correct = sum(
-                int(p == t) for p, t in zip(self.test_preds, self.test_labels)
-            )
-            acc = 100.0 * correct / len(self.test_labels)
-            self.log("test_acc", acc, prog_bar=True)
+        acc = 100.0 * self._test_correct / self._test_count
+        self.log("test_acc", acc, prog_bar=True)
         self.log("test_loss", avg_loss, prog_bar=True)
 
     def configure_optimizers(self):
@@ -290,11 +275,16 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
             from .pi_model_lightning_module import PiModelLightningModule
 
             return PiModelLightningModule(*args, **kwargs)
-        
+
         elif name == "fixmatch":
             from .fixmatch_lightning_module import FixMatchLightningModule
 
             return FixMatchLightningModule(*args, **kwargs)
-        
+
+        elif name == "mean_teacher":
+            from .mean_teacher_lightning_module import MeanTeacherLightningModule
+
+            return MeanTeacherLightningModule(*args, **kwargs)
+
         else:
             raise ValueError(f"Unknown semi-supervised module name: {name}")

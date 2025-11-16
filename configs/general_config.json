@@ -37,7 +37,7 @@
     "system": {
         "debug_mode": true,
         "log_mode": true,
-        "random_seed": 42,
+        "random_seed": 44,
         "seed_everything": true
     },
     "cv_grid_search": {

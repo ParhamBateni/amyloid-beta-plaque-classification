@@ -30,7 +30,7 @@ class Config:
                 [
                     (
                         f"{str(k)}: {str(v) if not isinstance(v, Config) else v._indented_str(indent + 1)}"
-                        if k != "cv_grid_search" or keep_cv_grid_search
+                        if (k != "cv_grid_search" or keep_cv_grid_search) and k!=""
                         else ""
                     )
                     for k, v in self.config.items()

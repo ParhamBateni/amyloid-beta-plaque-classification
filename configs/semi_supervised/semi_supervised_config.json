@@ -3,7 +3,7 @@
     "feature_extractor_name": "resnet18",
     "classifier_name": "linear",
     "training": {
-        "consistency_lambda_max": 1.0,
+        "consistency_lambda_max": 0.1,
         "consistency_loss_type": "cross_entropy",
         "ramp_up_epochs": 20,
         "ramp_up_function": "linear"

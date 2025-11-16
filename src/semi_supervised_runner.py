@@ -5,9 +5,6 @@ import os
 import torch
 import pandas as pd
 import pytorch_lightning as pl
-from models.modules.semi_supervised.pi_model_lightning_module import (
-    PiModelLightningModule,
-)
 from models.data.lightning_data_module import SemiSupervisedPlaqueLightningDataModule
 from models.modules.supervised.feature_extractors.base_feature_extractor import (
     BaseFeatureExtractor,
@@ -209,61 +206,7 @@ class SemiSupervisedRunner(BaseRunner):
     def load_model_from_checkpoint(self, checkpoint_path: str, device: str = "cpu"):
         """Load a semi-supervised model from checkpoint, auto-initializing components from config."""
         # TODO: This function is not used yet, so it is not implemented.
-
-        # Load checkpoint
-        checkpoint = torch.load(checkpoint_path, map_location=device)
-
-        # Create feature extractor and classifier using the refactored logic
-        feature_extractor = self._create_feature_extractor_from_config()
-        classifier = self._create_classifier_from_config(
-            feature_extractor.output_size
-            + (
-                self.config.general_config.data.extra_feature_dim
-                if self.config.general_config.data.use_extra_features
-                else 0
-            )
-        )
-
-        # Other Pi-Model components
-        criterion = nn.CrossEntropyLoss()
-        optimizer = self._create_base_optimizer()
-        optimizer_kwargs = self._get_base_optimizer_kwargs()
-
-        # Retrieve semi-supervised config
-        semi_supervised_config = self.config.semi_supervised.semi_supervised_config
-
-        # Build PiModelLightningModule using config-driven structure
-        model = PiModelLightningModule(
-            feature_extractor=feature_extractor,
-            classifier=classifier,
-            criterion=criterion,
-            optimizer=optimizer,
-            optimizer_kwargs=optimizer_kwargs,
-            use_extra_features=self.config.general_config.data.use_extra_features,
-            consistency_lambda=semi_supervised_config.data.consistency_lambda,
-            weak_augmentation_strength=semi_supervised_config.data.weak_augmentation_strength,
-            strong_augmentation_strength=semi_supervised_config.data.strong_augmentation_strength,
-            consistency_loss_type=semi_supervised_config.training.consistency_loss_type,
-            ramp_up_epochs=semi_supervised_config.training.ramp_up_epochs,
-            ramp_up_function=semi_supervised_config.training.ramp_up_function,
-        )
-
-        # Restore weights to model
-        model.load_state_dict(checkpoint["state_dict"])
-        model.eval()
-        model.to(device)
-
-        print(f"Model loaded from: {checkpoint_path}")
-        print(f"Model type: {self._type()}")
-        print(
-            f"Feature extractor: {self.config.semi_supervised.semi_supervised_config.feature_extractor_name}"
-        )
-        print(
-            f"Classifier: {self.config.semi_supervised.semi_supervised_config.classifier_name}"
-        )
-        print(f"Device: {device}")
-
-        return model
+        pass
 
     def _run_single_experiment(
         self,
@@ -305,7 +248,14 @@ class SemiSupervisedRunner(BaseRunner):
         semi_supervised_config = self.config.semi_supervised.semi_supervised_config
         kwargs = {}
         if semi_supervised_config.model_name == "fixmatch":
-            kwargs["pseudo_label_confidence_threshold"] = self.config.semi_supervised.fixmatch_config.training.pseudo_label_confidence_threshold
+            kwargs["pseudo_label_confidence_threshold"] = (
+                self.config.semi_supervised.fixmatch_config.pseudo_label_confidence_threshold
+            )
+        elif semi_supervised_config.model_name == "mean_teacher":
+            kwargs["ema_decay"] = (
+                self.config.semi_supervised.mean_teacher_config.ema_decay
+            )
+            kwargs["inference_mode"] = False
 
         pl_module = BaseLightningSemiSupervisedModule.create_semi_supervised_module(
             name=semi_supervised_config.model_name,
@@ -432,41 +382,18 @@ class SemiSupervisedRunner(BaseRunner):
 
         # Training transforms (strong augmentations for consistency)
         # TODO: Find the best augmentations later.
-        # Weak augmentation: minimal changes (slight flip & normalization)
-        weak_transforms = trf.Compose(
+        # Weak augmentation: minimal changes
+        weak_transforms = trf.Compose([
+            trf.RandomHorizontalFlip(p = 0.5),
+            trf.RandomVerticalFlip(p = 0.5),
+            trf.ToTensor(),
+        ])
+        strong_transforms = trf.Compose(
             [
-                trf.RandomHorizontalFlip(),
-                trf.RandomVerticalFlip(),
-                trf.RandomRotation(degrees=(0, 90)),
-                trf.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+                trf.RandAugment(num_ops=2, magnitude=10),
                 trf.ToTensor(),
             ]
         )
-        # Strong augmentation: more aggressive (flips, color jitter, rotation, normalization)
-        # strong_transforms = trf.Compose(
-        #     [
-        #         trf.RandomHorizontalFlip(p=0.5),
-        #         trf.RandomVerticalFlip(p=0.5),
-        #         trf.RandomRotation(degrees=45),  # Stronger random rotation
-        #         trf.ColorJitter(
-        #             brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1
-        #         ),  # More intense
-        #         trf.ToTensor(),
-        #     ]
-        # )
-        # strong_transforms = trf.Compose(
-        #     [
-        #         trf.RandomHorizontalFlip(p=0.5),
-        #         trf.RandomVerticalFlip(p=0.5),
-        #         trf.RandomRotation(degrees=(0, 90)),
-        #         trf.ColorJitter(brightness=0.2, contrast=0.2),
-        #         trf.ToTensor(),
-        #     ]
-        # )
-        strong_transforms = trf.Compose([
-            trf.RandAugment(num_ops=2, magnitude=10),
-            trf.ToTensor(),
-        ])
         train_labeled_plaque_dataset = PlaqueDatasetAugmented(
             train_labeled_data_df,
             data_folder_path=labeled_data_folder_path,
