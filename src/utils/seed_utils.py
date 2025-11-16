@@ -22,10 +22,9 @@ def set_random_seeds(seed: int):
 
     # Set PyTorch random seeds
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)  # For multi-GPU setups
 
     # Set PyTorch Lightning seed
-    pl.seed_everything(seed, workers=True)
+    pl.seed_everything(seed, workers=False)
 
     print(f"Random seeds set to {seed} for reproducibility")
