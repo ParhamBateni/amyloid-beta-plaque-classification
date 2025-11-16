@@ -74,6 +74,18 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         self._test_loss_sum = 0.0
         self._test_count = 0
 
+    @abstractmethod
+    def _compute_consistency_loss(self, unlabeled_batch: Any) -> torch.Tensor:
+        """
+        Compute consistency loss between labeled and unlabeled data.
+
+        Args:
+            unlabeled_batch: Batch of unlabeled data
+
+        Returns:
+            Consistency loss tensor
+        """
+
     def forward(
         self, x_image: torch.Tensor, x_features: torch.Tensor = None
     ) -> torch.Tensor:
@@ -121,33 +133,26 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
             raise ValueError(f"Unknown ramp-up function: {self.ramp_up_function}")
 
     def _get_consistency_loss(
-        self, outputs: torch.Tensor, targets: torch.Tensor
+        self, outputs: torch.Tensor, targets: torch.Tensor, reduce: bool = True
     ) -> torch.Tensor:
-        """Get consistency loss function."""
+        """Get consistency loss between predicted and target labels. Note that inputs are not probabilities, but logits."""
+
+        output_log_probs = F.log_softmax(outputs, dim=1)
+        target_probs = F.softmax(targets, dim=1)
         if self.consistency_loss_type == "mse":
-            return F.mse_loss(outputs, targets)
+            return F.mse_loss(output_log_probs, target_probs, reduction="mean" if reduce else None)
         elif self.consistency_loss_type == "kl":
             return F.kl_div(
-                F.log_softmax(outputs, dim=1),
-                F.softmax(targets, dim=1),
-                reduction="batchmean",
+                output_log_probs,
+                target_probs,
+                reduction="batchmean" if reduce else None,
             )
+        elif self.consistency_loss_type == "cross_entropy":
+            return F.cross_entropy(outputs, target_probs, reduction="mean" if reduce else None)
         else:
             raise ValueError(
                 f"Unknown consistency loss type: {self.consistency_loss_type}"
             )
-
-    @abstractmethod
-    def _compute_consistency_loss(self, unlabeled_batch: Any) -> torch.Tensor:
-        """
-        Compute consistency loss between labeled and unlabeled data.
-
-        Args:
-            unlabeled_batch: Batch of unlabeled data
-
-        Returns:
-            Consistency loss tensor
-        """
 
     def on_train_epoch_start(self):
         """Log ramp-up weight at start of each epoch."""
@@ -285,5 +290,11 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
             from .pi_model_lightning_module import PiModelLightningModule
 
             return PiModelLightningModule(*args, **kwargs)
+        
+        elif name == "fixmatch":
+            from .fixmatch_lightning_module import FixMatchLightningModule
+
+            return FixMatchLightningModule(*args, **kwargs)
+        
         else:
             raise ValueError(f"Unknown semi-supervised module name: {name}")

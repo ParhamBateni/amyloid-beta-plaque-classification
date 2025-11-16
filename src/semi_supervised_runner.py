@@ -299,6 +299,9 @@ class SemiSupervisedRunner(BaseRunner):
 
         # Get semi-supervised config
         semi_supervised_config = self.config.semi_supervised.semi_supervised_config
+        kwargs = {}
+        if semi_supervised_config.model_name == "fixmatch":
+            kwargs["pseudo_label_confidence_threshold"] = self.config.semi_supervised.fixmatch_config.training.pseudo_label_confidence_threshold
 
         pl_module = BaseLightningSemiSupervisedModule.create_semi_supervised_module(
             name=semi_supervised_config.model_name,
@@ -312,6 +315,7 @@ class SemiSupervisedRunner(BaseRunner):
             consistency_loss_type=semi_supervised_config.training.consistency_loss_type,
             ramp_up_epochs=semi_supervised_config.training.ramp_up_epochs,
             ramp_up_function=semi_supervised_config.training.ramp_up_function,
+            **kwargs,
         )
 
         # Create data module
@@ -432,14 +436,23 @@ class SemiSupervisedRunner(BaseRunner):
             ]
         )
         # Strong augmentation: more aggressive (flips, color jitter, rotation, normalization)
+        # strong_transforms = trf.Compose(
+        #     [
+        #         trf.RandomHorizontalFlip(p=0.5),
+        #         trf.RandomVerticalFlip(p=0.5),
+        #         trf.RandomRotation(degrees=45),  # Stronger random rotation
+        #         trf.ColorJitter(
+        #             brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1
+        #         ),  # More intense
+        #         trf.ToTensor(),
+        #     ]
+        # )
         strong_transforms = trf.Compose(
             [
                 trf.RandomHorizontalFlip(p=0.5),
                 trf.RandomVerticalFlip(p=0.5),
-                trf.RandomRotation(degrees=45),  # Stronger random rotation
-                trf.ColorJitter(
-                    brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1
-                ),  # More intense
+                trf.RandomRotation(degrees=(0, 90)),
+                trf.ColorJitter(brightness=0.2, contrast=0.2),
                 trf.ToTensor(),
             ]
         )

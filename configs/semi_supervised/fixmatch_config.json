@@ -1,0 +1,5 @@
+{
+    "training": {
+        "pseudo_label_confidence_threshold": 0.90
+    }
+}
