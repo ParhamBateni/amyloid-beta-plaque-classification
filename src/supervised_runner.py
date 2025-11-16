@@ -48,8 +48,9 @@ class SupervisedRunner(BaseRunner):
             test_size=self.config.general_config.training.val_size,
             stratify=train_labeled_data_df["Label"],
         )
-        trainer = self._create_base_trainer(
-            callbacks=[
+        callbacks = []
+        if not self.config.general_config.system.debug_mode:
+            callbacks.append(
                 ModelCheckpoint(
                     dirpath=os.path.join(self.runs_folder, "checkpoints"),
                     filename="best_model",
@@ -57,7 +58,9 @@ class SupervisedRunner(BaseRunner):
                     mode="min",
                     save_last=False,
                 )
-            ],
+            )
+        trainer = self._create_base_trainer(
+            callbacks=callbacks,
             logger=CSVLogger(save_dir=self.runs_folder, name="lightning_logs"),
         )
 

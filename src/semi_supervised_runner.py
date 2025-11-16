@@ -58,8 +58,9 @@ class SemiSupervisedRunner(BaseRunner):
         )
 
         # Create trainer
-        trainer = self._create_base_trainer(
-            callbacks=[
+        callbacks = []
+        if not self.config.general_config.system.debug_mode:
+            callbacks.append(
                 ModelCheckpoint(
                     dirpath=os.path.join(self.runs_folder, "checkpoints"),
                     filename="best_model",
@@ -67,7 +68,9 @@ class SemiSupervisedRunner(BaseRunner):
                     mode="min",
                     save_last=False,
                 )
-            ],
+            )
+        trainer = self._create_base_trainer(
+            callbacks=callbacks,
             logger=CSVLogger(save_dir=self.runs_folder, name="lightning_logs"),
         )
 
