@@ -41,6 +41,7 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
             nn.ReLU(),           # non-linearity
             nn.Dropout(p=dropout_rate),  # regularization before passing to classifier
         )
+        self.post_init()
 
     def forward(self, x_image: torch.Tensor) -> torch.Tensor:
         """

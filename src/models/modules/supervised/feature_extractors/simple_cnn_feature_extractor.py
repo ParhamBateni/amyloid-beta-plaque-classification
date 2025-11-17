@@ -30,6 +30,7 @@ class SimpleCNNFeatureExtractor(BaseFeatureExtractor):
             nn.Flatten(),  # (B, 128)
             nn.Linear(128, self.output_size),  # Project to desired feature size
         )
+        self.post_init()
 
     def forward(self, x_image: torch.Tensor) -> torch.Tensor:
         """

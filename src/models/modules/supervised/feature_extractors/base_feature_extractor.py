@@ -17,13 +17,15 @@ class BaseFeatureExtractor(ABC, nn.Module):
         self.input_dim = input_dim
         self.output_size = output_size
         self.feature_extractor = None
-
-        # Freeze feature extractor if requested
-        if self.freeze_feature_extractor:
-            for param in self.parameters():
-                param.requires_grad = False
-
         self.float()
+
+    def post_init(self) -> None:
+        """
+        Post-initialization hook.
+        """
+        if self.freeze_feature_extractor:
+            for param in self.feature_extractor.parameters():
+                param.requires_grad = False
 
     @abstractmethod
     def forward(self, x_image: torch.Tensor) -> torch.Tensor:
