@@ -7,7 +7,7 @@
         }
     },
     "resnet18": {
-        "output_size": 32,
+        "output_size": 64,
         "pretrained": true,
         "freeze_feature_extractor": true,
         "dropout_rate": 0.2,

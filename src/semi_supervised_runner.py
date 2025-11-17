@@ -298,7 +298,9 @@ class SemiSupervisedRunner(BaseRunner):
     def _cross_validate(self):
         """Run cross-validation for semi-supervised learning."""
         kfold = StratifiedKFold(
-            n_splits=self.config.general_config.training.cv_folds, shuffle=True
+            n_splits=self.config.general_config.training.cv_folds,
+            shuffle=True,
+            random_state=self.config.general_config.system.random_seed
         )
         kfold_train_losses = []
         kfold_val_losses = []
@@ -320,6 +322,7 @@ class SemiSupervisedRunner(BaseRunner):
                 train_labeled_data_df,
                 test_size=self.config.general_config.training.val_size,
                 stratify=train_labeled_data_df["Label"],
+                random_state=self.config.general_config.system.random_seed
             )
 
             trainer = self._create_base_trainer()

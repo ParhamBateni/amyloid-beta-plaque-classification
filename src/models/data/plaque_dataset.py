@@ -7,7 +7,6 @@ from torchvision import transforms as trf
 from PIL import Image
 from tqdm import tqdm
 import sys
-from models.config import Config
 from typing import List
 import matplotlib.pyplot as plt
 from torchvision.transforms.functional import to_pil_image
@@ -118,8 +117,8 @@ class PlaqueDataset(torch.utils.data.Dataset):
         self.apply_transforms_on_the_fly = apply_transforms_on_the_fly
         # store normalization stats (expected shape [C])
         self.normalize_data = normalize_data
-        self.normalize_mean = torch.tensor(normalize_mean)
-        self.normalize_std = torch.tensor(normalize_std)
+        self.normalize_mean = torch.tensor(normalize_mean) if normalize_mean is not None else None
+        self.normalize_std = torch.tensor(normalize_std) if normalize_std is not None else None
         self.downscaled_image_size = downscaled_image_size
         self.downscaling_method = downscaling_method
         self.use_extra_features = use_extra_features
@@ -388,13 +387,29 @@ class PlaqueDataset(torch.utils.data.Dataset):
 
 
 if __name__ == "__main__":
+    # Add src directory to path when running directly
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    src_path = os.path.join(project_root, "src")
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+    
     print("Running plaque_dataset.py visualization sample")
     from utils.data_utils import load_data_df
+    from models.config import Config
 
-    config = Config.load_config("configs")
-
+    config = Config.load_config("configs", "supervised")
+    
     # Load data and create splits (using the config to locate paths and parameters)
-    labeled_data_df, unlabeled_data_df = load_data_df("supervised", config)
+    data_df_path = os.path.join(
+        config.general_config.data.data_folder,
+        config.general_config.data.data_table_file_name,
+    )
+    labeled_data_df, unlabeled_data_df = load_data_df(
+        data_df_path=data_df_path,
+        labeled_sample_size=config.general_config.data.labeled_sample_size,
+        unlabeled_sample_size=config.general_config.data.unlabeled_sample_size,
+        train_mode="supervised",
+    )
     print("Loaded labeled_data_df shape: ", labeled_data_df.shape)
 
     # Location of image data folder
