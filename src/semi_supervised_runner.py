@@ -146,7 +146,7 @@ class SemiSupervisedRunner(BaseRunner):
                 best_trainer,
             ) = self._cross_validate()
 
-        if best_trainer is not None:
+        if best_trainer is not None and not self.config.general_config.system.debug_mode:
             best_trainer.save_checkpoint(
                 os.path.join(self.runs_folder, "best_model_cv.ckpt")
             )

@@ -25,7 +25,7 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
         self.dropout_rate = dropout_rate
         # Load pretrained ResNet model
         try:
-            self.feature_extractor = getattr(models, model_name)(
+            self.resnet_model = getattr(models, model_name)(
                 pretrained=self.pretrained
             )
         except AttributeError:
@@ -33,14 +33,13 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
 
         # Remove the final classification layer
         self.feature_extractor = nn.Sequential(
-            *list(self.feature_extractor.children())[:-1],  # up to avgpool
+            *list(self.resnet_model.children())[:-1],  # up to avgpool
             nn.Flatten(),  # [B, C, 1, 1] → [B, C]
-            nn.Dropout(
-                p=dropout_rate
-            ),  # Dropout before final linear classification/projection layer
-            nn.Linear(
-                self.feature_extractor.fc.in_features, self.output_size
-            ),  # [B, C] → [B, output_size]
+        )
+        self.linear = nn.Sequential(
+            nn.Linear(self.resnet_model.fc.in_features, self.output_size),
+            nn.ReLU(),           # non-linearity
+            nn.Dropout(p=dropout_rate),  # regularization before passing to classifier
         )
 
     def forward(self, x_image: torch.Tensor) -> torch.Tensor:
@@ -55,6 +54,7 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
         """
         image_features = self.feature_extractor(x_image)
         image_features = image_features.view(image_features.size(0), -1)  # Flatten
+        image_features = self.linear(image_features)
         return image_features
 
     def to_dict(self) -> dict:
