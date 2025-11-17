@@ -47,7 +47,9 @@ class MeanTeacherLightningModule(BaseLightningSemiSupervisedModule):
 
         # Create teacher models (EMA copies of student models)
         self.teacher_feature_extractor = copy.deepcopy(feature_extractor)
+        self.teacher_feature_extractor.eval()
         self.teacher_classifier = copy.deepcopy(classifier)
+        self.teacher_classifier.eval()
 
         # Freeze teacher models (no gradients)
         for param in self.teacher_feature_extractor.parameters():

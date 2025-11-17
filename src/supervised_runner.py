@@ -42,11 +42,13 @@ class SupervisedRunner(BaseRunner):
             self.labeled_data_df,
             test_size=self.config.general_config.training.test_size,
             stratify=self.labeled_data_df["Label"],
+            random_state=self.config.general_config.system.random_seed,
         )
         train_labeled_data_df, val_labeled_data_df = train_test_split(
             train_labeled_data_df,
             test_size=self.config.general_config.training.val_size,
             stratify=train_labeled_data_df["Label"],
+            random_state=self.config.general_config.system.random_seed,
         )
         callbacks = []
         if not self.config.general_config.system.debug_mode:
