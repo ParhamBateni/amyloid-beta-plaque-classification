@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 from typing import Any, Callable, Iterable
+from sklearn.metrics import f1_score
 
 from .feature_extractors.base_feature_extractor import BaseFeatureExtractor
 from .classifiers.base_classifier import BaseClassifier
@@ -55,6 +56,8 @@ class LightningSupervisedModule(pl.LightningModule):
         self._val_loss_sum = 0.0
         self._val_correct = 0
         self._val_count = 0
+        self._val_labels = []
+        self._val_preds = []
         self._test_loss_sum = 0.0
         self._test_count = 0
 
@@ -94,10 +97,24 @@ class LightningSupervisedModule(pl.LightningModule):
         return loss
 
     def validation_step(self, batch: Any, batch_idx: int):
-        loss, correct, count = self._step_common(batch)
+        (
+            _image_paths,
+            normalized_transformed_images,
+            extra_features,
+            labels,
+        ) = batch
+        inputs = normalized_transformed_images
+        outputs = self(inputs, extra_features if self.use_extra_features else None)
+        loss = self.criterion(outputs, labels)
+        preds = torch.argmax(outputs, dim=1)
+        correct = (preds == labels).sum().item()
+        count = labels.size(0)
         self._val_loss_sum += loss.item()
         self._val_correct += correct
         self._val_count += count
+        # Store predictions and labels for F1 score computation
+        self._val_labels.extend(labels.cpu().tolist())
+        self._val_preds.extend(preds.cpu().tolist())
 
     def on_train_epoch_end(self):
         if self._train_count > 0:
@@ -123,6 +140,16 @@ class LightningSupervisedModule(pl.LightningModule):
             val_acc = 100.0 * self._val_correct / self._val_count
             self.val_losses.append(round(float(avg_val_loss), 3))
             self.val_accuracies.append(round(float(val_acc), 3))
+            
+            # Compute F1 score
+            if len(self._val_labels) > 0 and len(self._val_preds) > 0:
+                val_f1 = f1_score(self._val_labels, self._val_preds, average='macro')
+                self.log(
+                    "val_f1",
+                    val_f1,
+                    prog_bar=True,
+                )
+            
             # Log epoch-level val metrics once per epoch
             self.log(
                 "val_loss",
@@ -138,6 +165,8 @@ class LightningSupervisedModule(pl.LightningModule):
         self._val_loss_sum = 0.0
         self._val_correct = 0
         self._val_count = 0
+        self._val_labels = []
+        self._val_preds = []
 
     def test_step(self, batch: Any, batch_idx: int):
         (
