@@ -32,7 +32,7 @@
         "weight_decay": 1e-5,
         "early_stop": 2,
         "early_stop_check_val_every_n_epoch": 5,
-        "early_stop_monitor": "val_f1",
+        "checkpoint_monitor": "val_f1",
         "cv_folds": 5
     },
     "system": {

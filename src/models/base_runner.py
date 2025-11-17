@@ -93,9 +93,9 @@ class BaseRunner(ABC):
         if self.config.general_config.training.early_stop > 0:
             callbacks.append(
                 EarlyStopping(
-                    monitor=self.config.general_config.training.early_stop_monitor,
+                    monitor="val_loss",
                     patience=self.config.general_config.training.early_stop,
-                    mode= "max" if "f1" in self.config.general_config.training.early_stop_monitor else "min",
+                    mode="min",
                 )
             )
         # Progress bar

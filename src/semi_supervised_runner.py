@@ -63,8 +63,8 @@ class SemiSupervisedRunner(BaseRunner):
                 ModelCheckpoint(
                     dirpath=os.path.join(self.runs_folder, "checkpoints"),
                     filename="best_model",
-                    monitor=self.config.general_config.training.early_stop_monitor,
-                    mode= "max" if "f1" in self.config.general_config.training.early_stop_monitor else "min",
+                    monitor=self.config.general_config.training.checkpoint_monitor,
+                    mode= "max" if "f1" in self.config.general_config.training.checkpoint_monitor else "min",
                     save_last=False,
                 )
             )
