@@ -383,11 +383,13 @@ class SemiSupervisedRunner(BaseRunner):
         # Training transforms (strong augmentations for consistency)
         # TODO: Find the best augmentations later.
         # Weak augmentation: minimal changes
-        weak_transforms = trf.Compose([
-            trf.RandomHorizontalFlip(p = 0.5),
-            trf.RandomVerticalFlip(p = 0.5),
-            trf.ToTensor(),
-        ])
+        weak_transforms = trf.Compose(
+            [
+                trf.RandomHorizontalFlip(p=0.5),
+                trf.RandomVerticalFlip(p=0.5),
+                trf.ToTensor(),
+            ]
+        )
         strong_transforms = trf.Compose(
             [
                 trf.RandAugment(num_ops=2, magnitude=10),

@@ -68,8 +68,6 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         self._val_correct = 0
         self._val_count = 0
         self._test_loss_sum = 0.0
-        self._test_correct = 0
-        self._test_count = 0
 
     @abstractmethod
     def _compute_consistency_loss(self, unlabeled_batch: Any) -> torch.Tensor:
@@ -97,7 +95,7 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         x = self.classifier(x)
         return x
 
-    def _step_common(self, batch: Any) -> Tuple[torch.Tensor, int, int]:
+    def _step_common(self, batch: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Common step logic for supervised data."""
         (
             _image_paths,
@@ -111,9 +109,7 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         )
         loss = self.criterion(outputs, labels)
         preds = torch.argmax(outputs, dim=1)
-        correct = (preds == labels).sum().item()
-        count = labels.size(0)
-        return loss, correct, count
+        return labels, preds, loss
 
     def _get_ramp_up_weight(self, current_epoch: int) -> float:
         """Get ramp-up weight for consistency loss."""
@@ -168,10 +164,10 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         labeled_batch, unlabeled_batch = batch
 
         # === Supervised loss ===
-        supervised_loss, correct, count = self._step_common(labeled_batch)
+        labels, preds, supervised_loss = self._step_common(labeled_batch)
         self._train_loss_sum += supervised_loss.detach().item()
-        self._train_correct += correct
-        self._train_count += count
+        self._train_correct += (preds == labels).sum().item()
+        self._train_count += labels.size(0)
 
         # === Consistency loss ===
         consistency_loss = self._compute_consistency_loss(unlabeled_batch)
@@ -211,10 +207,10 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
 
     def validation_step(self, batch: Any, batch_idx: int):
         """Validation step using only labeled data."""
-        loss, correct, count = self._step_common(batch)
+        labels, preds, loss = self._step_common(batch)
         self._val_loss_sum += loss.item()
-        self._val_correct += correct
-        self._val_count += count
+        self._val_correct += (preds == labels).sum().item()
+        self._val_count += labels.size(0)
 
     def on_train_epoch_end(self):
         """Log training metrics at end of epoch."""
@@ -250,16 +246,18 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
 
     def test_step(self, batch: Any, batch_idx: int):
         """Test step using only labeled data."""
-        loss, correct, count = self._step_common(batch)
-        self._test_correct += correct
-        self._test_count += count
+        labels, preds, loss = self._step_common(batch)
         self._test_loss_sum += float(loss.item())
+        self.test_labels.extend(labels.cpu().tolist())
+        self.test_preds.extend(preds.cpu().tolist())
 
     def on_test_epoch_end(self):
         """Log test metrics at end of epoch."""
-        avg_loss = self._test_loss_sum / max(1, self._test_count)
-        acc = 100.0 * self._test_correct / self._test_count
-        self.log("test_acc", acc, prog_bar=True)
+        test_count = len(self.test_labels)
+        test_correct = sum(int(p == t) for p, t in zip(self.test_preds, self.test_labels))
+        avg_loss = self._test_loss_sum / max(1, test_count)
+        acc = 100.0 * test_correct / test_count
+        self.log("test_acc", acc / 100.0, prog_bar=True)
         self.log("test_loss", avg_loss, prog_bar=True)
 
     def configure_optimizers(self):
