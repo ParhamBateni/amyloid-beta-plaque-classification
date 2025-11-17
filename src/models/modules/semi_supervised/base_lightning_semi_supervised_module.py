@@ -68,6 +68,8 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         self._val_correct = 0
         self._val_count = 0
         self._test_loss_sum = 0.0
+        self.test_labels = []
+        self.test_preds = []
 
     @abstractmethod
     def _compute_consistency_loss(self, unlabeled_batch: Any) -> torch.Tensor:
@@ -95,7 +97,9 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         x = self.classifier(x)
         return x
 
-    def _step_common(self, batch: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _step_common(
+        self, batch: Any
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Common step logic for supervised data."""
         (
             _image_paths,
@@ -254,7 +258,9 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
     def on_test_epoch_end(self):
         """Log test metrics at end of epoch."""
         test_count = len(self.test_labels)
-        test_correct = sum(int(p == t) for p, t in zip(self.test_preds, self.test_labels))
+        test_correct = sum(
+            int(p == t) for p, t in zip(self.test_preds, self.test_labels)
+        )
         avg_loss = self._test_loss_sum / max(1, test_count)
         acc = 100.0 * test_correct / test_count
         self.log("test_acc", acc / 100.0, prog_bar=True)

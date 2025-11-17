@@ -74,10 +74,13 @@ class FixMatchLightningModule(BaseLightningSemiSupervisedModule):
             :, 1, :, :
         ]
         # Get predictions for both augmented versions
-        weak_probs = F.softmax(self.forward(
-            weak_transformed_image_tensors,
-            extra_features if self.use_extra_features else None,
-        ), dim=1)
+        weak_probs = F.softmax(
+            self.forward(
+                weak_transformed_image_tensors,
+                extra_features if self.use_extra_features else None,
+            ),
+            dim=1,
+        )
 
         weak_labels = torch.argmax(weak_probs, dim=1)
 
@@ -86,15 +89,25 @@ class FixMatchLightningModule(BaseLightningSemiSupervisedModule):
             extra_features if self.use_extra_features else None,
         )
 
-        threshold_mask = torch.max(weak_probs, dim=1).values >= self.pseudo_label_confidence_threshold
+        threshold_mask = (
+            torch.max(weak_probs, dim=1).values
+            >= self.pseudo_label_confidence_threshold
+        )
 
         if threshold_mask.sum() == 0:
             return torch.tensor(0.0, device=self.device)
 
         filtered_weak_labels = weak_labels[threshold_mask]
         filtered_strong_preds = strong_preds[threshold_mask]
-        filtered_weak_preds = (1-F.one_hot(filtered_weak_labels, num_classes=self.classifier.output_size).float()) * float('-inf')
-        filtered_weak_preds = torch.where(filtered_weak_preds.isnan(), 0, filtered_weak_preds)
+        filtered_weak_preds = (
+            1
+            - F.one_hot(
+                filtered_weak_labels, num_classes=self.classifier.output_size
+            ).float()
+        ) * float("-inf")
+        filtered_weak_preds = torch.where(
+            filtered_weak_preds.isnan(), 0, filtered_weak_preds
+        )
 
         # Compute consistency loss
         consistency_loss = self._get_consistency_loss(
