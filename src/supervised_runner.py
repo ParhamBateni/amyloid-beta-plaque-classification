@@ -57,7 +57,12 @@ class SupervisedRunner(BaseRunner):
                     dirpath=os.path.join(self.runs_folder, "checkpoints"),
                     filename="best_model",
                     monitor=self.config.general_config.training.checkpoint_monitor,
-                    mode= "max" if "f1" in self.config.general_config.training.checkpoint_monitor else "min",
+                    mode=(
+                        "max"
+                        if "f1"
+                        in self.config.general_config.training.checkpoint_monitor
+                        else "min"
+                    ),
                     save_last=False,
                 )
             )
@@ -135,7 +140,10 @@ class SupervisedRunner(BaseRunner):
                 best_trainer,
             ) = self._cross_validate()
 
-        if best_trainer is not None and not self.config.general_config.system.debug_mode:
+        if (
+            best_trainer is not None
+            and not self.config.general_config.system.debug_mode
+        ):
             best_trainer.save_checkpoint(
                 os.path.join(self.runs_folder, "best_model_cv.ckpt")
             )
@@ -298,7 +306,7 @@ class SupervisedRunner(BaseRunner):
         kfold = StratifiedKFold(
             n_splits=self.config.general_config.training.cv_folds,
             shuffle=True,
-            random_state=self.config.general_config.system.random_seed
+            random_state=self.config.general_config.system.random_seed,
         )
         kfold_train_losses = []
         kfold_val_losses = []
@@ -319,7 +327,7 @@ class SupervisedRunner(BaseRunner):
                 train_labeled_data_df,
                 test_size=self.config.general_config.training.val_size,
                 stratify=train_labeled_data_df["Label"],
-                random_state=self.config.general_config.system.random_seed
+                random_state=self.config.general_config.system.random_seed,
             )
             trainer = self._create_base_trainer()
             (
@@ -423,7 +431,9 @@ class SupervisedRunner(BaseRunner):
             downscaling_method=self.config.general_config.data.downscaling_method,
             number_of_augmentations=0,
         )
-        print(f"Train labeled plaque dataset length: {len(train_labeled_plaque_dataset)}")
+        print(
+            f"Train labeled plaque dataset length: {len(train_labeled_plaque_dataset)}"
+        )
         print(f"Val labeled plaque dataset length: {len(val_labeled_plaque_dataset)}")
         print(f"Test labeled plaque dataset length: {len(test_labeled_plaque_dataset)}")
         train_labeled_dataloader = torch.utils.data.DataLoader(

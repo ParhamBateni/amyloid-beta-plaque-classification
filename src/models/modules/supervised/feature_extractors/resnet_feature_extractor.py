@@ -25,9 +25,7 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
         self.dropout_rate = dropout_rate
         # Load pretrained ResNet model
         try:
-            self.resnet_model = getattr(models, model_name)(
-                pretrained=self.pretrained
-            )
+            self.resnet_model = getattr(models, model_name)(pretrained=self.pretrained)
         except AttributeError:
             raise ValueError(f"Unsupported ResNet model: {model_name}")
 
@@ -38,7 +36,7 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
         )
         self.linear = nn.Sequential(
             nn.Linear(self.resnet_model.fc.in_features, self.output_size),
-            nn.ReLU(),           # non-linearity
+            nn.ReLU(),  # non-linearity
             nn.Dropout(p=dropout_rate),  # regularization before passing to classifier
         )
         self.post_init()

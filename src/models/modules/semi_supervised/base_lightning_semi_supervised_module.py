@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 import math
 from ..supervised.feature_extractors.base_feature_extractor import BaseFeatureExtractor
 from ..supervised.classifiers.base_classifier import BaseClassifier
+from sklearn.metrics import f1_score
 
 
 class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
@@ -62,11 +63,11 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
 
         # Batch tracking
         self._train_loss_sum = 0.0
-        self._train_correct = 0
-        self._train_count = 0
+        self._train_labels = []
+        self._train_preds = []
         self._val_loss_sum = 0.0
-        self._val_correct = 0
-        self._val_count = 0
+        self._val_labels = []
+        self._val_preds = []
         self._test_loss_sum = 0.0
         self.test_labels = []
         self.test_preds = []
@@ -170,8 +171,8 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         # === Supervised loss ===
         labels, preds, supervised_loss = self._step_common(labeled_batch)
         self._train_loss_sum += supervised_loss.detach().item()
-        self._train_correct += (preds == labels).sum().item()
-        self._train_count += labels.size(0)
+        self._train_labels.extend(labels.cpu().tolist())
+        self._train_preds.extend(preds.cpu().tolist())
 
         # === Consistency loss ===
         consistency_loss = self._compute_consistency_loss(unlabeled_batch)
@@ -213,40 +214,54 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         """Validation step using only labeled data."""
         labels, preds, loss = self._step_common(batch)
         self._val_loss_sum += loss.item()
-        self._val_correct += (preds == labels).sum().item()
-        self._val_count += labels.size(0)
+        self._val_labels.extend(labels.cpu().tolist())
+        self._val_preds.extend(preds.cpu().tolist())
 
     def on_train_epoch_end(self):
         """Log training metrics at end of epoch."""
-        if self._train_count > 0:
+        if len(self._train_labels) > 0:
             avg_loss = self._train_loss_sum / max(1, self.trainer.num_training_batches)
-            acc = 100.0 * self._train_correct / self._train_count
+            acc = (
+                100.0
+                * sum(
+                    int(p == t) for p, t in zip(self._train_preds, self._train_labels)
+                )
+                / len(self._train_labels)
+            )
             self.train_losses.append(round(float(avg_loss), 3))
             self.train_accuracies.append(round(float(acc), 3))
 
             self.log("train_loss", avg_loss, prog_bar=True)
             self.log("train_accuracy", acc / 100.0, prog_bar=True)
+            train_f1 = f1_score(self._train_labels, self._train_preds, average="macro")
+            self.log("train_f1", train_f1, prog_bar=True)
 
         # Reset train trackers
         self._train_loss_sum = 0.0
-        self._train_correct = 0
-        self._train_count = 0
+        self._train_labels = []
+        self._train_preds = []
 
     def on_validation_epoch_end(self):
         """Log validation metrics at end of epoch."""
-        if self._val_count > 0:
+        if len(self._val_labels) > 0:
             avg_val_loss = self._val_loss_sum / max(1, self.trainer.num_val_batches[0])
-            val_acc = 100.0 * self._val_correct / self._val_count
+            val_acc = (
+                100.0
+                * sum(int(p == t) for p, t in zip(self._val_preds, self._val_labels))
+                / len(self._val_labels)
+            )
             self.val_losses.append(round(float(avg_val_loss), 3))
             self.val_accuracies.append(round(float(val_acc), 3))
 
             self.log("val_loss", avg_val_loss, prog_bar=True)
             self.log("val_accuracy", val_acc / 100.0, prog_bar=True)
+            val_f1 = f1_score(self._val_labels, self._val_preds, average="macro")
+            self.log("val_f1", val_f1, prog_bar=True)
 
         # Reset val trackers
         self._val_loss_sum = 0.0
-        self._val_correct = 0
-        self._val_count = 0
+        self._val_labels = []
+        self._val_preds = []
 
     def test_step(self, batch: Any, batch_idx: int):
         """Test step using only labeled data."""
@@ -257,14 +272,16 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
 
     def on_test_epoch_end(self):
         """Log test metrics at end of epoch."""
-        test_count = len(self.test_labels)
-        test_correct = sum(
-            int(p == t) for p, t in zip(self.test_preds, self.test_labels)
+        avg_loss = self._test_loss_sum / max(1, len(self.test_labels))
+        acc = (
+            100.0
+            * sum(int(p == t) for p, t in zip(self.test_preds, self.test_labels))
+            / len(self.test_labels)
         )
-        avg_loss = self._test_loss_sum / max(1, test_count)
-        acc = 100.0 * test_correct / test_count
-        self.log("test_acc", acc / 100.0, prog_bar=True)
         self.log("test_loss", avg_loss, prog_bar=True)
+        self.log("test_acc", acc / 100.0, prog_bar=True)
+        test_f1 = f1_score(self.test_labels, self.test_preds, average="macro")
+        self.log("test_f1", test_f1, prog_bar=True)
 
     def configure_optimizers(self):
         """Configure optimizer."""

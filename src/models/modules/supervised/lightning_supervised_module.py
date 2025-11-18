@@ -46,20 +46,15 @@ class LightningSupervisedModule(pl.LightningModule):
         self.train_accuracies = []
         self.val_accuracies = []
 
-        # For test-time reporting
-        self.test_labels = []
-        self.test_preds = []
-
         self._train_loss_sum = 0.0
-        self._train_correct = 0
-        self._train_count = 0
+        self._train_labels = []
+        self._train_preds = []
         self._val_loss_sum = 0.0
-        self._val_correct = 0
-        self._val_count = 0
         self._val_labels = []
         self._val_preds = []
         self._test_loss_sum = 0.0
-        self._test_count = 0
+        self.test_labels = []
+        self.test_preds = []
 
     def forward(
         self, x_image: torch.Tensor, x_features: torch.Tensor = None
@@ -85,116 +80,80 @@ class LightningSupervisedModule(pl.LightningModule):
         outputs = self(inputs, extra_features if self.use_extra_features else None)
         loss = self.criterion(outputs, labels)
         preds = torch.argmax(outputs, dim=1)
-        correct = (preds == labels).sum().item()
-        count = labels.size(0)
-        return loss, correct, count
+        return labels, preds, loss
 
     def training_step(self, batch: Any, batch_idx: int):
-        loss, correct, count = self._step_common(batch)
+        labels, preds, loss = self._step_common(batch)
         self._train_loss_sum += loss.item()
-        self._train_correct += correct
-        self._train_count += count
+        self._train_labels.extend(labels.cpu().tolist())
+        self._train_preds.extend(preds.cpu().tolist())
         return loss
 
     def validation_step(self, batch: Any, batch_idx: int):
-        (
-            _image_paths,
-            normalized_transformed_images,
-            extra_features,
-            labels,
-        ) = batch
-        inputs = normalized_transformed_images
-        outputs = self(inputs, extra_features if self.use_extra_features else None)
-        loss = self.criterion(outputs, labels)
-        preds = torch.argmax(outputs, dim=1)
-        correct = (preds == labels).sum().item()
-        count = labels.size(0)
+        labels, preds, loss = self._step_common(batch)
         self._val_loss_sum += loss.item()
-        self._val_correct += correct
-        self._val_count += count
-        # Store predictions and labels for F1 score computation
         self._val_labels.extend(labels.cpu().tolist())
         self._val_preds.extend(preds.cpu().tolist())
 
     def on_train_epoch_end(self):
-        if self._train_count > 0:
+        if len(self._train_labels) > 0:
             avg_loss = self._train_loss_sum / max(1, self.trainer.num_training_batches)
-            acc = 100.0 * self._train_correct / self._train_count
+            acc = (
+                100.0
+                * sum(
+                    int(p == t) for p, t in zip(self._train_preds, self._train_labels)
+                )
+                / len(self._train_labels)
+            )
             self.train_losses.append(round(float(avg_loss), 3))
             self.train_accuracies.append(round(float(acc), 3))
             # Log epoch-level train metrics once per epoch
             self.log("train_loss", avg_loss, prog_bar=True)
-            self.log(
-                "train_accuracy",
-                acc / 100.0,
-                prog_bar=True,
-            )
+            self.log("train_accuracy", acc / 100.0, prog_bar=True)
+            train_f1 = f1_score(self._train_labels, self._train_preds, average="macro")
+            self.log("train_f1", train_f1, prog_bar=True)
         # Reset train trackers only; val trackers reset in on_validation_epoch_end
         self._train_loss_sum = 0.0
-        self._train_correct = 0
-        self._train_count = 0
+        self._train_labels = []
+        self._train_preds = []
 
     def on_validation_epoch_end(self):
-        if self._val_count > 0:
+        if len(self._val_labels) > 0:
             avg_val_loss = self._val_loss_sum / max(1, self.trainer.num_val_batches[0])
-            val_acc = 100.0 * self._val_correct / self._val_count
+            val_acc = (
+                100.0
+                * sum(int(p == t) for p, t in zip(self._val_preds, self._val_labels))
+                / len(self._val_labels)
+            )
             self.val_losses.append(round(float(avg_val_loss), 3))
             self.val_accuracies.append(round(float(val_acc), 3))
-            
-            # Compute F1 score
-            if len(self._val_labels) > 0 and len(self._val_preds) > 0:
-                val_f1 = f1_score(self._val_labels, self._val_preds, average='macro')
-                self.log(
-                    "val_f1",
-                    val_f1,
-                    prog_bar=True,
-                )
-            
-            # Log epoch-level val metrics once per epoch
-            self.log(
-                "val_loss",
-                avg_val_loss,
-                prog_bar=True,
-            )
-            self.log(
-                "val_accuracy",
-                val_acc / 100.0,
-                prog_bar=True,
-            )
+
+            self.log("val_loss", avg_val_loss, prog_bar=True)
+            self.log("val_accuracy", val_acc / 100.0, prog_bar=True)
+            val_f1 = f1_score(self._val_labels, self._val_preds, average="macro")
+            self.log("val_f1", val_f1, prog_bar=True)
         # Reset val trackers
         self._val_loss_sum = 0.0
-        self._val_correct = 0
-        self._val_count = 0
         self._val_labels = []
         self._val_preds = []
 
     def test_step(self, batch: Any, batch_idx: int):
-        (
-            _image_paths,
-            normalized_transformed_image,
-            extra_features,
-            labels,
-        ) = batch
-        outputs = self(
-            normalized_transformed_image,
-            extra_features if self.use_extra_features else None,
-        )
-        preds = torch.argmax(outputs, dim=1)
+        labels, preds, loss = self._step_common(batch)
+        self._test_loss_sum += float(loss.item())
         self.test_labels.extend(labels.cpu().tolist())
         self.test_preds.extend(preds.cpu().tolist())
-        loss = self.criterion(outputs, labels)
-        self._test_loss_sum += float(loss.item())
-        self._test_count += labels.size(0)
 
     def on_test_epoch_end(self):
-        avg_loss = self._test_loss_sum / max(1, self._test_count)
-        if len(self.test_labels) > 0:
-            correct = sum(
-                int(p == t) for p, t in zip(self.test_preds, self.test_labels)
-            )
-            acc = 100.0 * correct / len(self.test_labels)
-            self.log("test_acc", acc, prog_bar=True)
+        avg_loss = self._test_loss_sum / max(1, len(self.test_labels))
+        acc = (
+            100.0
+            * sum(int(p == t) for p, t in zip(self.test_preds, self.test_labels))
+            / len(self.test_labels)
+        )
         self.log("test_loss", avg_loss, prog_bar=True)
+        self.log("test_acc", acc / 100.0, prog_bar=True)
+        test_f1 = f1_score(self.test_labels, self.test_preds, average="macro")
+        self.log("test_f1", test_f1, prog_bar=True)
 
     def configure_optimizers(self):
         return self.optimizer(self.parameters(), **self.optimizer_kwargs)

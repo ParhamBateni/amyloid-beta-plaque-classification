@@ -1,10 +1,10 @@
 {
-    "model_name": "mean_teacher",
+    "model_name": "fixmatch",
     "feature_extractor_name": "resnet18",
     "classifier_name": "linear",
     "training": {
         "consistency_lambda_max": 0.1,
-        "consistency_loss_type": "mse",
+        "consistency_loss_type": "cross_entropy",
         "ramp_up_epochs": 100,
         "ramp_up_function": "linear"
     }
