@@ -13,5 +13,6 @@ __pycache__
 *.err
 *.pkl
 
+*.pages
 data.zip
 .DS_Store

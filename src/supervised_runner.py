@@ -431,11 +431,6 @@ class SupervisedRunner(BaseRunner):
             downscaling_method=self.config.general_config.data.downscaling_method,
             number_of_augmentations=0,
         )
-        print(
-            f"Train labeled plaque dataset length: {len(train_labeled_plaque_dataset)}"
-        )
-        print(f"Val labeled plaque dataset length: {len(val_labeled_plaque_dataset)}")
-        print(f"Test labeled plaque dataset length: {len(test_labeled_plaque_dataset)}")
         train_labeled_dataloader = torch.utils.data.DataLoader(
             train_labeled_plaque_dataset,
             batch_size=self.config.general_config.training.batch_size,
@@ -460,9 +455,6 @@ class SupervisedRunner(BaseRunner):
             pin_memory=self.config.general_config.training.pin_memory,
             persistent_workers=self.config.general_config.training.persistent_workers,
         )
-        print(f"Train labeled dataloader length: {len(train_labeled_dataloader)}")
-        print(f"Val labeled dataloader length: {len(val_labeled_dataloader)}")
-        print(f"Test labeled dataloader length: {len(test_labeled_dataloader)}")
         return (
             train_labeled_dataloader,
             val_labeled_dataloader,

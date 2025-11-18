@@ -394,18 +394,12 @@ class SemiSupervisedRunner(BaseRunner):
         )
 
         # Training transforms (strong augmentations for consistency)
-        # TODO: Find the best augmentations later.
-        # Weak augmentation: minimal changes
-        weak_transforms = trf.Compose(
+        labeled_train_transforms = trf.Compose(
             [
                 trf.RandomHorizontalFlip(p=0.5),
                 trf.RandomVerticalFlip(p=0.5),
-                trf.ToTensor(),
-            ]
-        )
-        strong_transforms = trf.Compose(
-            [
-                trf.RandAugment(num_ops=2, magnitude=10),
+                trf.RandomRotation(degrees=(0, 90)),
+                trf.ColorJitter(brightness=0.2, contrast=0.2),
                 trf.ToTensor(),
             ]
         )
@@ -413,7 +407,7 @@ class SemiSupervisedRunner(BaseRunner):
             train_labeled_data_df,
             data_folder_path=labeled_data_folder_path,
             name_to_label=self.config.name_to_label,
-            transforms=weak_transforms,
+            transforms=labeled_train_transforms,
             description="train labeled plaque images",
             normalize_data=self.config.general_config.data.normalize_data,
             normalize_mean=self.config.general_config.data.normalize_mean,
@@ -454,11 +448,26 @@ class SemiSupervisedRunner(BaseRunner):
             number_of_augmentations=0,
         )
 
+        # TODO: Find the best augmentations later.
+        # Weak augmentation: minimal changes
+        unlabeled_weak_transforms = trf.Compose(
+            [
+                trf.RandomHorizontalFlip(p=0.5),
+                trf.RandomVerticalFlip(p=0.5),
+                trf.ToTensor(),
+            ]
+        )
+        unlabeled_strong_transforms = trf.Compose(
+            [
+                trf.RandAugment(num_ops=2, magnitude=10),
+                trf.ToTensor(),
+            ]
+        )
         train_unlabeled_plaque_dataset = PlaqueDataset(
             unlabeled_data_df,
             data_folder_path=unlabeled_data_folder_path,
             name_to_label=self.config.name_to_label,
-            transforms=[weak_transforms, strong_transforms],
+            transforms=[unlabeled_weak_transforms, unlabeled_strong_transforms],
             description="train unlabeled plaque images",
             normalize_data=self.config.general_config.data.normalize_data,
             normalize_mean=self.config.general_config.data.normalize_mean,
