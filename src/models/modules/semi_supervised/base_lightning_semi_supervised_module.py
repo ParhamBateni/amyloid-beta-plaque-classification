@@ -179,9 +179,8 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         # === Total loss ===
         total_loss = supervised_loss + self.consistency_lambda * consistency_loss
         self._train_loss_sum += total_loss.detach().item()
-        
+
         # === Logging ===
-        batch_size = len(labeled_batch)
         # Log per-batch metrics; Lightning will aggregate per epoch automatically
         self.log(
             "train_supervised_loss",
@@ -189,7 +188,7 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
             on_step=False,
             on_epoch=True,
             prog_bar=True,
-            batch_size=batch_size,
+            batch_size=len(labeled_batch[0]),
         )
         self.log(
             "train_consistency_loss",
@@ -197,7 +196,7 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
             on_step=False,
             on_epoch=True,
             prog_bar=True,
-            batch_size=batch_size,
+            batch_size=len(unlabeled_batch[0]),
         )
 
         return total_loss

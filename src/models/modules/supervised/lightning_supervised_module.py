@@ -76,7 +76,10 @@ class LightningSupervisedModule(pl.LightningModule):
             extra_features,
             labels,
         ) = batch
-        outputs = self(normalized_transformed_images, extra_features if self.use_extra_features else None)
+        outputs = self(
+            normalized_transformed_images,
+            extra_features if self.use_extra_features else None,
+        )
         loss = self.criterion(outputs, labels)
         preds = torch.argmax(outputs, dim=1)
         return labels, preds, loss
