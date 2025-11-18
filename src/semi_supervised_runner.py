@@ -279,6 +279,10 @@ class SemiSupervisedRunner(BaseRunner):
             consistency_loss_type=semi_supervised_config.training.consistency_loss_type,
             ramp_up_epochs=semi_supervised_config.training.ramp_up_epochs,
             ramp_up_function=semi_supervised_config.training.ramp_up_function,
+            use_thresholding=self.config.general_config.training.use_thresholding,
+            threshold_min=self.config.general_config.training.threshold_min,
+            threshold_max=self.config.general_config.training.threshold_max,
+            threshold_steps=self.config.general_config.training.threshold_steps,
             **kwargs,
         )
 

@@ -1,5 +1,5 @@
 {
-    "model_name": "fixmatch",
+    "model_name": "mean_teacher",
     "feature_extractor_name": "resnet18",
     "classifier_name": "linear",
     "training": {

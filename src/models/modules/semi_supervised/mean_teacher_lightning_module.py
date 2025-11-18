@@ -21,6 +21,10 @@ class MeanTeacherLightningModule(BaseLightningSemiSupervisedModule):
         optimizer: Callable[[Iterable[torch.nn.Parameter]], torch.optim.Optimizer],
         optimizer_kwargs: dict = {},
         use_extra_features: bool = False,
+        use_thresholding: bool = False,
+        threshold_min: float = 0.1,
+        threshold_max: float = 0.9,
+        threshold_steps: int = 17,
         consistency_lambda_max: float = 0.5,
         consistency_loss_type: str = "mse",
         ramp_up_epochs: int = 10,
@@ -35,6 +39,10 @@ class MeanTeacherLightningModule(BaseLightningSemiSupervisedModule):
             optimizer=optimizer,
             optimizer_kwargs=optimizer_kwargs,
             use_extra_features=use_extra_features,
+            use_thresholding=use_thresholding,
+            threshold_min=threshold_min,
+            threshold_max=threshold_max,
+            threshold_steps=threshold_steps,
             consistency_lambda_max=consistency_lambda_max,
             consistency_loss_type=consistency_loss_type,
             ramp_up_epochs=ramp_up_epochs,
@@ -147,27 +155,25 @@ class MeanTeacherLightningModule(BaseLightningSemiSupervisedModule):
         """Update teacher model weights after each training batch."""
         self._update_teacher_weights()
 
-    def on_train_end(self):
-        """Set forward method to teacher forward method for inference."""
-        self.forward = self._teacher_forward
+    # def on_train_end(self):
+    #     """Set forward method to teacher forward method for inference."""
+    #     self.forward = self._teacher_forward
 
-    def validation_step(self, batch: Any, batch_idx: int):
-        """Validation step using teacher model for inference."""
-        (
-            _image_paths,
-            normalized_transformed_image_tensors,
-            extra_features,
-            labels,
-        ) = batch
-        # Use teacher model for validation
-        outputs = self._teacher_forward(
-            normalized_transformed_image_tensors,
-            extra_features if self.use_extra_features else None,
-        )
-        loss = self.criterion(outputs, labels)
-        preds = torch.argmax(outputs, dim=1)
-        correct = (preds == labels).sum().item()
-        count = labels.size(0)
-        self._val_loss_sum += loss.item()
-        self._val_correct += correct
-        self._val_count += count
+    # def validation_step(self, batch: Any, batch_idx: int):
+    #     """Validation step using teacher model for inference."""
+    #     (
+    #         _image_paths,
+    #         normalized_transformed_image_tensors,
+    #         extra_features,
+    #         labels,
+    #     ) = batch
+    #     # Use teacher model for validation
+    #     outputs = self._teacher_forward(
+    #         normalized_transformed_image_tensors,
+    #         extra_features if self.use_extra_features else None,
+    #     )
+    #     loss = self.criterion(outputs, labels)
+    #     preds = torch.argmax(outputs, dim=1)
+    #     self._val_loss_sum += loss.item()
+    #     self._val_labels.extend(labels.cpu().tolist())
+    #     self._val_preds.extend(preds.cpu().tolist())

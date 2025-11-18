@@ -283,6 +283,10 @@ class SupervisedRunner(BaseRunner):
             optimizer=optimizer,
             optimizer_kwargs=optimizer_kwargs,
             use_extra_features=self.config.general_config.data.use_extra_features,
+            use_thresholding=self.config.general_config.training.use_thresholding,
+            threshold_min=self.config.general_config.training.threshold_min,
+            threshold_max=self.config.general_config.training.threshold_max,
+            threshold_steps=self.config.general_config.training.threshold_steps,
         )
 
         data_module = SupervisedPlaqueLightningDataModule(
