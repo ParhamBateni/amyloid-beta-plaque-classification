@@ -436,8 +436,6 @@ class SelfSupervisedRunner(BaseRunner):
             if original_freeze_feature_extractor:
                 feature_extractor.freeze_feature_extractor()
 
-        if feature_extractor.frozen:
-            feature_extractor.eval()
         feature_extractor.to(self.config.general_config.system.device)
 
         classifier = BaseClassifier.create_classifier(
