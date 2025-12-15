@@ -36,9 +36,7 @@ class BaseLightningSelfSupervisedModule(pl.LightningModule, ABC):
         self.optimizer_kwargs = optimizer_kwargs
         # Tracking of reconstruction / pretext losses (generic)
         self.train_losses: list[float] = []
-        self.val_losses: list[float] = []
         self._train_loss_sum: float = 0.0
-        self._val_loss_sum: float = 0.0
 
         self.save_hyperparameters(
             {
@@ -94,24 +92,10 @@ class BaseLightningSelfSupervisedModule(pl.LightningModule, ABC):
             self.log(f"train_{key}", value, prog_bar=False)
         return loss
 
-    def validation_step(self, batch: Any, batch_idx: int):
-        x = self._unpack_batch(batch)
-        loss, metrics = self._forward_and_loss(x)
-        self._val_loss_sum += float(loss.item())
-
-        self.log("val_loss", loss, prog_bar=True)
-        for key, value in metrics.items():
-            self.log(f"val_{key}", value, prog_bar=False)
-
     def on_train_epoch_end(self):
         avg_loss = self._train_loss_sum / max(1, self.trainer.num_training_batches)
         self.train_losses.append(round(float(avg_loss), 4))
         self._train_loss_sum = 0.0
-
-    def on_validation_epoch_end(self):
-        avg_val_loss = self._val_loss_sum / max(1, self.trainer.num_val_batches[0])
-        self.val_losses.append(round(float(avg_val_loss), 4))
-        self._val_loss_sum = 0.0
 
     def configure_optimizers(self):
         return self.optimizer(self.parameters(), **self.optimizer_kwargs)

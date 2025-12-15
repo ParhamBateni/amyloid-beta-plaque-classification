@@ -269,17 +269,6 @@ class SelfSupervisedRunner(BaseRunner):
         best_val_loss = float("inf")
         best_trainer = None
 
-        # Split unlabeled data once for all folds
-        if len(self.unlabeled_data_df) > 0:
-            train_unlabeled_data_df, val_unlabeled_data_df = train_test_split(
-                self.unlabeled_data_df,
-                test_size=self.config.general_config.training.val_size,
-                random_state=self.config.general_config.system.random_seed,
-            )
-        else:
-            train_unlabeled_data_df = self.unlabeled_data_df
-            val_unlabeled_data_df = self.unlabeled_data_df
-
         for fold, (train_idx, test_idx) in tqdm(
             enumerate(kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
             total=self.config.general_config.training.cv_folds,
@@ -295,7 +284,14 @@ class SelfSupervisedRunner(BaseRunner):
             )
 
             # Simple trainers without checkpointing/logging for cross-validation
-            pretraining_trainer = self._create_base_trainer()
+            pretraining_trainer = pl.Trainer(
+                max_epochs=self.config.self_supervised.self_supervised_config.pretraining.num_epochs,
+                enable_checkpointing=False,
+                enable_progress_bar=True,
+                callbacks=[RichProgressBar(refresh_rate=1, leave=True)],
+                log_every_n_steps=1,
+                num_sanity_val_steps=0,
+           )
             finetuning_trainer = self._create_base_trainer()
 
             (
@@ -309,8 +305,7 @@ class SelfSupervisedRunner(BaseRunner):
                 train_labeled_data_df=train_labeled_data_df,
                 val_labeled_data_df=val_labeled_data_df,
                 test_labeled_data_df=test_labeled_data_df,
-                train_unlabeled_data_df=train_unlabeled_data_df,
-                val_unlabeled_data_df=val_unlabeled_data_df,
+                unlabeled_data_df=self.unlabeled_data_df,
                 pretraining_trainer=pretraining_trainer,
                 finetuning_trainer=finetuning_trainer,
             )

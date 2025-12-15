@@ -28,7 +28,7 @@
         "batch_size": 64,
         "num_epochs": 500,
         "optimizer": "adamw",
-        "learning_rate": 1e-4,
+        "learning_rate": 1e-5,
         "weight_decay": 1e-5,
         "early_stop": 2,
         "early_stop_check_val_every_n_epoch": 5,

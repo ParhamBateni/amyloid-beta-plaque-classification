@@ -11,7 +11,7 @@
     "resnet18": {
         "output_size": 64,
         "pretrained": true,
-        "freeze": true,
+        "freeze": false,
         "unfreeze_after_n_epochs": 0,
         "unfreeze_last_n_blocks": 0,
         "dropout_rate": 0.2,
