@@ -256,7 +256,7 @@ class SelfSupervisedRunner(BaseRunner):
     def _cross_validate(self):
         """Run cross-validation for self-supervised learning."""
         kfold = StratifiedKFold(
-            n_splits=self.config.general_config.training.cv_folds,
+            n_splits=int(1//self.config.general_config.training.test_size),
             shuffle=True,
             random_state=self.config.general_config.system.random_seed,
         )
@@ -271,7 +271,7 @@ class SelfSupervisedRunner(BaseRunner):
 
         for fold, (train_idx, test_idx) in tqdm(
             enumerate(kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
-            total=self.config.general_config.training.cv_folds,
+            total=1//self.config.general_config.training.test_size,
             desc="Cross-validating",
         ):
             train_labeled_data_df = self.labeled_data_df.iloc[train_idx]
@@ -357,6 +357,12 @@ class SelfSupervisedRunner(BaseRunner):
             test_labeled_data_df=test_labeled_data_df,
             unlabeled_data_df=unlabeled_data_df,
         )
+        if self.config.general_config.system.debug_mode:
+            print("Statistics of the dataloaders:")
+            print(f"Train labeled dataloader number of batches: {len(train_labeled_dataloader)}, size: {len(train_labeled_dataloader.dataset)}")
+            print(f"Val labeled dataloader number of batches: {len(val_labeled_dataloader)}, size: {len(val_labeled_dataloader.dataset)}")
+            print(f"Test labeled dataloader number of batches: {len(test_labeled_dataloader)}, size: {len(test_labeled_dataloader.dataset)}")
+            print(f"Unlabeled dataloader number of batches: {len(unlabeled_dataloader)}, size: {len(unlabeled_dataloader.dataset)}")
         # Run self-supervised backbone pretraining
         self_supervised_config = self.config.self_supervised.self_supervised_config
 

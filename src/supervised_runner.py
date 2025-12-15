@@ -263,6 +263,12 @@ class SupervisedRunner(BaseRunner):
                 train_labeled_data_df, val_labeled_data_df, test_labeled_data_df
             )
         )
+        if self.config.general_config.system.debug_mode:
+            print("Statistics of the dataloaders:")
+            print(f"Train labeled dataloader size: {len(train_labeled_dataloader)}")
+            print(f"Val labeled dataloader size: {len(val_labeled_dataloader)}")
+            print(f"Test labeled dataloader size: {len(test_labeled_dataloader)}")
+
         feature_extractor = self._create_feature_extractor_from_config()
         classifier = self._create_classifier_from_config(
             feature_extractor.output_size
@@ -308,7 +314,7 @@ class SupervisedRunner(BaseRunner):
 
     def _cross_validate(self):
         kfold = StratifiedKFold(
-            n_splits=self.config.general_config.training.cv_folds,
+            n_splits=int(1//self.config.general_config.training.test_size),
             shuffle=True,
             random_state=self.config.general_config.system.random_seed,
         )
@@ -322,7 +328,7 @@ class SupervisedRunner(BaseRunner):
         best_trainer = None
         for fold, (train_idx, test_idx) in tqdm(
             enumerate(kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
-            total=self.config.general_config.training.cv_folds,
+            total=1//self.config.general_config.training.test_size,
             desc="Cross-validating",
         ):
             train_labeled_data_df = self.labeled_data_df.iloc[train_idx]
