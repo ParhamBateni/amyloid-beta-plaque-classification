@@ -401,6 +401,7 @@ class SelfSupervisedRunner(BaseRunner):
                     self_supervised_config.feature_extractor_name
                 ].to_dict()
             )
+            original_freeze_feature_extractor = feature_extractor_config["freeze"]
             feature_extractor_config["freeze"] = False
             feature_extractor = BaseFeatureExtractor.create_feature_extractor(
                 feature_extractor_name=self_supervised_config.feature_extractor_name,
@@ -432,7 +433,7 @@ class SelfSupervisedRunner(BaseRunner):
             )
             pretraining_trainer.fit(ssl_module, datamodule=data_module)
             feature_extractor = ssl_module.feature_extractor
-            if feature_extractor_config["freeze"]:
+            if original_freeze_feature_extractor:
                 feature_extractor.freeze_feature_extractor()
 
         if feature_extractor.frozen:

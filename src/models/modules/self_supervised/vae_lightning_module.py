@@ -50,9 +50,10 @@ class LightningVAEModule(BaseLightningSelfSupervisedModule):
         self.fc_mu = nn.Linear(encoder_output_dim, self.latent_dim)
         self.fc_logvar = nn.Linear(encoder_output_dim, self.latent_dim)
 
-        # Decoder: from latent dim back to image
-        # Ensure final output shape matches input image shape (C, H, W)
-        # input_dim may be (channels, height, width) or similar tuple
+        # Decoder: from latent dim back to image.
+        # We reconstruct the normalized images directly, so we do NOT apply a
+        # final sigmoid/tanh; the output is unconstrained and compared to the
+        # normalized targets with an L2/L1 loss.
         input_channels = 3
 
         # Start from a spatial size small enough to upsample
@@ -72,7 +73,6 @@ class LightningVAEModule(BaseLightningSelfSupervisedModule):
             nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),  # *2
             nn.ReLU(inplace=True),
             nn.ConvTranspose2d(16, input_channels, kernel_size=4, stride=2, padding=1),  # *2; shape should now match (C, H, W)
-            nn.Sigmoid(),
         )
 
         self.save_hyperparameters(
