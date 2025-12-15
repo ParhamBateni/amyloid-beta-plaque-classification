@@ -12,10 +12,11 @@ class SimpleCNNFeatureExtractor(BaseFeatureExtractor):
         self,
         input_dim: int,
         output_size: int,
-        freeze_feature_extractor: bool = False,
+        freeze: bool = False,
+        unfreeze_after_n_epochs: int = 0,
         **kwargs,
     ):
-        super().__init__(input_dim, output_size, freeze_feature_extractor)
+        super().__init__(input_dim, output_size, freeze, unfreeze_after_n_epochs)
 
         self.feature_extractor = nn.Sequential(
             nn.Conv2d(3, 32, kernel_size=3, padding=1),  # Fewer output channels

@@ -36,9 +36,9 @@
         "cv_folds": 5,
 
         "use_thresholding": true,
-        "threshold_min": 0.1,
-        "threshold_max": 0.9,
-        "threshold_steps": 17
+        "threshold_min": 0,
+        "threshold_max": 1,
+        "threshold_steps": 20
     },
     "system": {
         "debug_mode": true,

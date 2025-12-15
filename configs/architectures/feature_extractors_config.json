@@ -1,7 +1,9 @@
 {
     "simple_cnn": {
         "output_size": 64,
-        "freeze_feature_extractor": false,
+        "freeze": false,
+        "unfreeze_after_n_epochs": 60,
+        "unfreeze_last_n_blocks": 1,
         "cv_grid_search":{
             "output_size": [64, 128, 256]
         }
@@ -9,7 +11,9 @@
     "resnet18": {
         "output_size": 64,
         "pretrained": true,
-        "freeze_feature_extractor": true,
+        "freeze": true,
+        "unfreeze_after_n_epochs": 60,
+        "unfreeze_last_n_blocks": 1,
         "dropout_rate": 0.2,
         "cv_grid_search":{
             "output_size": [64, 128, 256]
@@ -18,7 +22,9 @@
     "resnet34": {
         "output_size": 64,
         "pretrained": true,
-        "freeze_feature_extractor": true,
+        "freeze": true,
+        "unfreeze_after_n_epochs": 60,
+        "unfreeze_last_n_blocks": 1,
         "dropout_rate": 0.2,
         "cv_grid_search":{
             "output_size": [64, 128, 256]
@@ -27,8 +33,11 @@
     "resnet50": {
         "output_size": 64,
         "pretrained": true,
-        "freeze_feature_extractor": true,
+        "freeze": true,
+        "unfreeze_after_n_epochs": 60,
+        "unfreeze_last_n_blocks": 1,
         "dropout_rate": 0.2,
+
         "cv_grid_search":{
             "output_size": [64, 128, 256]
         }

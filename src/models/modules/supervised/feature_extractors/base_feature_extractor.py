@@ -10,22 +10,50 @@ class BaseFeatureExtractor(ABC, nn.Module):
     """
 
     def __init__(
-        self, input_dim: int, output_size: int, freeze_feature_extractor: bool = False
+        self, input_dim: int, output_size: int, freeze: bool = False, unfreeze_last_n_blocks: int = 0, 
+        unfreeze_after_n_epochs: int = 0,
     ):
         super().__init__()
-        self.freeze_feature_extractor = freeze_feature_extractor
+        self.freeze = freeze
+        self.unfreeze_last_n_blocks = unfreeze_last_n_blocks
+        self.unfreeze_after_n_epochs = unfreeze_after_n_epochs
         self.input_dim = input_dim
         self.output_size = output_size
         self.feature_extractor = None
+        self.frozen = freeze
         self.float()
 
     def post_init(self) -> None:
         """
         Post-initialization hook.
         """
-        if self.freeze_feature_extractor:
+        if self.freeze:
             for param in self.feature_extractor.parameters():
                 param.requires_grad = False
+                
+    def freeze_feature_extractor(self) -> None:
+        """
+        Freeze the feature extractor.
+        """
+        self.frozen = True
+        for param in self.feature_extractor.parameters():
+            param.requires_grad = False
+
+    def check_for_unfreezing(self, current_epoch: int) -> None:
+        """
+        Check if the feature extractor should be unfreezed.
+        """
+        if self.frozen and self.unfreeze_after_n_epochs > 0 and current_epoch >= self.unfreeze_after_n_epochs:
+            print(f"Unfreezing feature extractor at epoch {current_epoch}")
+            self.frozen = False
+            c = 0
+            for layer in list(self.feature_extractor.children())[::-1]:
+                if isinstance(layer, nn.Linear) or isinstance(layer, nn.Conv2d) or isinstance(layer, nn.Sequential):
+                    c += 1
+                    if c > self.unfreeze_last_n_blocks:
+                        break
+                    for param in layer.parameters():
+                        param.requires_grad = True
 
     @abstractmethod
     def forward(self, x_image: torch.Tensor) -> torch.Tensor:
@@ -79,6 +107,8 @@ class BaseFeatureExtractor(ABC, nn.Module):
         return {
             "input_dim": self.input_dim,
             "output_size": self.output_size,
-            "freeze_feature_extractor": self.freeze_feature_extractor,
+            "freeze": self.freeze,
+            "unfreeze_after_n_epochs": self.unfreeze_after_n_epochs,
+            "unfreeze_last_n_blocks": self.unfreeze_last_n_blocks,
             "feature_extractor": str(self.feature_extractor),
         }

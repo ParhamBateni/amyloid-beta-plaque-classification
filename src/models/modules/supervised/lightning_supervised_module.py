@@ -214,7 +214,7 @@ class LightningSupervisedModule(pl.LightningModule):
         when using a thresholded decision rule.
         """
         num_classes = probs.shape[1]
-        thresholds = np.linspace(self.threshold_min, self.threshold_max, self.threshold_steps)
+        thresholds = np.linspace(self.threshold_min, self.threshold_max, self.threshold_steps+1)
         class_thresholds = np.full(num_classes, self.threshold_min, dtype=np.float32)
 
         for c in range(num_classes):
@@ -277,6 +277,7 @@ class LightningSupervisedModule(pl.LightningModule):
             )
             probs = torch.softmax(outputs, dim=1)
             if use_thresholds and self.class_thresholds is not None:
+                print("Using thresholds: ", self.class_thresholds)
                 preds_np = self._apply_thresholds(
                     probs.detach().cpu().numpy(), self.class_thresholds
                 )

@@ -13,13 +13,15 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
         self,
         input_dim: int,
         output_size: int,
-        freeze_feature_extractor: bool = False,
+        freeze: bool = False,
+        unfreeze_last_n_blocks: int = 0,
+        unfreeze_after_n_epochs: int = 0,
         model_name: str = "resnet18",
         pretrained: bool = True,
         dropout_rate: float = 0.2,
         **kwargs,
     ):
-        super().__init__(input_dim, output_size, freeze_feature_extractor)
+        super().__init__(input_dim, output_size, freeze, unfreeze_last_n_blocks, unfreeze_after_n_epochs)
         self.model_name = model_name
         self.pretrained = pretrained
         self.dropout_rate = dropout_rate

@@ -86,7 +86,8 @@ class BaseRunner(ABC):
         """Create PyTorch Lightning trainer."""
         if callbacks is None:
             callbacks = []
-        if logger is None:
+        # logger can be either a Lightning logger or False / None to disable logging
+        if logger is False:
             logger = None
 
         # Early stopping
@@ -129,7 +130,8 @@ class BaseRunner(ABC):
 
             return SemiSupervisedRunner(config)
         elif train_mode == "self_supervised":
-            pass
-            # return SelfSupervisedRunner(config)
+            from self_supervised_runner import SelfSupervisedRunner
+
+            return SelfSupervisedRunner(config)
         else:
             raise ValueError(f"Invalid train mode: {train_mode}")
