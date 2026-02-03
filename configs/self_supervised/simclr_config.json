@@ -1,0 +1,5 @@
+{
+    "temperature": 0.5,
+    "projection_head_sizes": [128, 64],
+    "projection_head_activation": "relu"
+}

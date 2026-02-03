@@ -1,5 +1,5 @@
 {
-    "pretraining_method": "vae",
+    "pretraining_method": "simclr",
     "feature_extractor_name": "resnet18",
     "classifier_name": "linear",
     "pretraining": {

@@ -42,6 +42,7 @@ class SelfSupervisedPlaqueLightningDataModule(pl.LightningDataModule):
     def train_dataloader(self):
         return self.unlabeled_plaque_dataloader
 
+
 class SemiSupervisedPlaqueLightningDataModule(pl.LightningDataModule):
     def __init__(
         self,

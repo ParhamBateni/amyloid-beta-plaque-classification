@@ -44,7 +44,9 @@ class LightningVAEModule(BaseLightningSelfSupervisedModule):
         self.reconstruction_loss = reconstruction_loss.lower()
 
         # Encoder head: from backbone feature space to latent parameters
-        encoder_output_dim = self.feature_extractor.output_size  # this is a flat vector size
+        encoder_output_dim = (
+            self.feature_extractor.output_size
+        )  # this is a flat vector size
         self.latent_dim = latent_dim
 
         self.fc_mu = nn.Linear(encoder_output_dim, self.latent_dim)
@@ -61,18 +63,31 @@ class LightningVAEModule(BaseLightningSelfSupervisedModule):
         self.decoder_start_h = self.feature_extractor.input_dim[0] // 16
         self.decoder_start_w = self.feature_extractor.input_dim[1] // 16
         self.decoder_start_channels = 128
-        decoder_input_dim = self.decoder_start_channels * self.decoder_start_h * self.decoder_start_w
+        decoder_input_dim = (
+            self.decoder_start_channels * self.decoder_start_h * self.decoder_start_w
+        )
 
         self.decoder = nn.Sequential(
             nn.Linear(self.latent_dim, decoder_input_dim),
-            nn.Unflatten(1, (self.decoder_start_channels, self.decoder_start_h, self.decoder_start_w)),
-            nn.ConvTranspose2d(self.decoder_start_channels, 64, kernel_size=4, stride=2, padding=1),  # *2
+            nn.Unflatten(
+                1,
+                (
+                    self.decoder_start_channels,
+                    self.decoder_start_h,
+                    self.decoder_start_w,
+                ),
+            ),
+            nn.ConvTranspose2d(
+                self.decoder_start_channels, 64, kernel_size=4, stride=2, padding=1
+            ),  # *2
             nn.ReLU(inplace=True),
             nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),  # *2
             nn.ReLU(inplace=True),
             nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),  # *2
             nn.ReLU(inplace=True),
-            nn.ConvTranspose2d(16, input_channels, kernel_size=4, stride=2, padding=1),  # *2; shape should now match (C, H, W)
+            nn.ConvTranspose2d(
+                16, input_channels, kernel_size=4, stride=2, padding=1
+            ),  # *2; shape should now match (C, H, W)
         )
 
         self.save_hyperparameters(
@@ -98,19 +113,23 @@ class LightningVAEModule(BaseLightningSelfSupervisedModule):
         x = self.decoder(z)
         return x
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         mu, logvar = self.encode(x)
         z = self.reparameterize(mu, logvar)
         recon_x = self.decode(z)
         return recon_x, mu, logvar
 
     def _compute_loss(
-        self, x: torch.Tensor, recon_x: torch.Tensor, mu: torch.Tensor, logvar: torch.Tensor
+        self,
+        x: torch.Tensor,
+        recon_x: torch.Tensor,
+        mu: torch.Tensor,
+        logvar: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if self.reconstruction_loss == "bce":
-            recon_loss = F.binary_cross_entropy(
-                recon_x, x, reduction="mean"
-            )
+            recon_loss = F.binary_cross_entropy(recon_x, x, reduction="mean")
         elif self.reconstruction_loss == "l1":
             recon_loss = F.l1_loss(recon_x, x, reduction="mean")
         else:
@@ -146,4 +165,3 @@ class LightningVAEModule(BaseLightningSelfSupervisedModule):
         ) = batch
         # For VAE, we use the normalized raw image tensors as both input and target.
         return normalized_raw_image_tensors
-

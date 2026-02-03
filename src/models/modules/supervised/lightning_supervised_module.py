@@ -139,14 +139,16 @@ class LightningSupervisedModule(pl.LightningModule):
     def on_validation_epoch_end(self):
         if len(self._val_labels) > 0:
             avg_val_loss = self._val_loss_sum / max(1, self.trainer.num_val_batches[0])
-            probs_val = torch.cat(self._val_probs, dim=0).numpy() if self._val_probs else None
+            probs_val = (
+                torch.cat(self._val_probs, dim=0).numpy() if self._val_probs else None
+            )
             labels_val = np.array(self._val_labels)
             preds_argmax = np.array(self._val_preds)
 
             if self.use_thresholding and probs_val is not None:
                 # --- per-class threshold search ---
-                self.class_thresholds, val_f1_thresh = self._search_best_class_thresholds(
-                    probs_val, labels_val
+                self.class_thresholds, val_f1_thresh = (
+                    self._search_best_class_thresholds(probs_val, labels_val)
                 )
                 preds_thresh = self._apply_thresholds(probs_val, self.class_thresholds)
                 val_acc_thresh = 100.0 * (preds_thresh == labels_val).mean()
@@ -168,7 +170,9 @@ class LightningSupervisedModule(pl.LightningModule):
                 # original argmax-based metrics
                 val_acc = (
                     100.0
-                    * sum(int(p == t) for p, t in zip(self._val_preds, self._val_labels))
+                    * sum(
+                        int(p == t) for p, t in zip(self._val_preds, self._val_labels)
+                    )
                     / len(self._val_labels)
                 )
                 self.val_losses.append(round(float(avg_val_loss), 3))
@@ -214,7 +218,9 @@ class LightningSupervisedModule(pl.LightningModule):
         when using a thresholded decision rule.
         """
         num_classes = probs.shape[1]
-        thresholds = np.linspace(self.threshold_min, self.threshold_max, self.threshold_steps+1)
+        thresholds = np.linspace(
+            self.threshold_min, self.threshold_max, self.threshold_steps + 1
+        )
         class_thresholds = np.full(num_classes, self.threshold_min, dtype=np.float32)
 
         for c in range(num_classes):
@@ -234,7 +240,9 @@ class LightningSupervisedModule(pl.LightningModule):
         macro_f1 = f1_score(labels, preds_thresh, average="macro")
         return class_thresholds, macro_f1
 
-    def _apply_thresholds(self, probs: np.ndarray, class_thresholds: np.ndarray) -> np.ndarray:
+    def _apply_thresholds(
+        self, probs: np.ndarray, class_thresholds: np.ndarray
+    ) -> np.ndarray:
         """
         Apply per-class thresholds to probability matrix to obtain final predictions.
         For each sample:
@@ -273,7 +281,11 @@ class LightningSupervisedModule(pl.LightningModule):
         with torch.no_grad():
             outputs = self(
                 x_image,
-                x_features if (self.use_extra_features and x_features is not None) else None,
+                (
+                    x_features
+                    if (self.use_extra_features and x_features is not None)
+                    else None
+                ),
             )
             probs = torch.softmax(outputs, dim=1)
             if use_thresholds and self.class_thresholds is not None:

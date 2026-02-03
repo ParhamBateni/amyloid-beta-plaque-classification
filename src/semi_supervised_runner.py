@@ -233,7 +233,12 @@ class SemiSupervisedRunner(BaseRunner):
             val_labeled_dataloader,
             test_labeled_dataloader,
             unlabeled_dataloader,
-        ) = self._load_dataloaders(train_labeled_data_df, val_labeled_data_df, test_labeled_data_df, unlabeled_data_df)
+        ) = self._load_dataloaders(
+            train_labeled_data_df,
+            val_labeled_data_df,
+            test_labeled_data_df,
+            unlabeled_data_df,
+        )
 
         # Create model components
         feature_extractor = self._create_feature_extractor_from_config()
@@ -305,7 +310,7 @@ class SemiSupervisedRunner(BaseRunner):
     def _cross_validate(self):
         """Run cross-validation for semi-supervised learning."""
         kfold = StratifiedKFold(
-            n_splits=int(1//self.config.general_config.training.test_size),
+            n_splits=int(1 // self.config.general_config.training.test_size),
             shuffle=True,
             random_state=self.config.general_config.system.random_seed,
         )
@@ -320,7 +325,7 @@ class SemiSupervisedRunner(BaseRunner):
 
         for fold, (train_idx, test_idx) in tqdm(
             enumerate(kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
-            total=1//self.config.general_config.training.test_size,
+            total=1 // self.config.general_config.training.test_size,
             desc="Cross-validating",
         ):
             train_labeled_data_df = self.labeled_data_df.iloc[train_idx]
@@ -392,6 +397,7 @@ class SemiSupervisedRunner(BaseRunner):
             self.config.general_config.data.unlabeled_data_folder,
         )
 
+        # TODO: To be adjusted later.
         # Training transforms (strong augmentations for consistency)
         labeled_train_transforms = trf.Compose(
             [
@@ -447,7 +453,7 @@ class SemiSupervisedRunner(BaseRunner):
             number_of_augmentations=0,
         )
 
-        # TODO: Find the best augmentations later.
+        # TODO: To be adjusted later.
         # Weak augmentation: minimal changes
         unlabeled_weak_transforms = trf.Compose(
             [

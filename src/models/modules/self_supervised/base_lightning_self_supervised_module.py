@@ -119,7 +119,9 @@ class BaseLightningSelfSupervisedModule(pl.LightningModule, ABC):
             from .vae_lightning_module import LightningVAEModule
 
             return LightningVAEModule(*args, **kwargs)
+        elif name == "simclr":
+            from .simclr_lightning_module import LightningSimCLRModule
+
+            return LightningSimCLRModule(*args, **kwargs)
         else:
             raise ValueError(f"Unknown self-supervised module name: {name}")
-
-

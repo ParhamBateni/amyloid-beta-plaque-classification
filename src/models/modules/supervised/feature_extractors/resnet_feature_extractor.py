@@ -21,7 +21,13 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
         dropout_rate: float = 0.2,
         **kwargs,
     ):
-        super().__init__(input_dim, output_size, freeze, unfreeze_last_n_blocks, unfreeze_after_n_epochs)
+        super().__init__(
+            input_dim,
+            output_size,
+            freeze,
+            unfreeze_last_n_blocks,
+            unfreeze_after_n_epochs,
+        )
         self.model_name = model_name
         self.pretrained = pretrained
         self.dropout_rate = dropout_rate

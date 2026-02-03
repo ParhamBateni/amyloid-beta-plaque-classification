@@ -10,7 +10,11 @@ class BaseFeatureExtractor(ABC, nn.Module):
     """
 
     def __init__(
-        self, input_dim: int, output_size: int, freeze: bool = False, unfreeze_last_n_blocks: int = 0, 
+        self,
+        input_dim: int,
+        output_size: int,
+        freeze: bool = False,
+        unfreeze_last_n_blocks: int = 0,
         unfreeze_after_n_epochs: int = 0,
     ):
         super().__init__()
@@ -30,7 +34,7 @@ class BaseFeatureExtractor(ABC, nn.Module):
         if self.freeze:
             for param in self.feature_extractor.parameters():
                 param.requires_grad = False
-                
+
     def freeze_feature_extractor(self) -> None:
         """
         Freeze the feature extractor.
@@ -43,12 +47,20 @@ class BaseFeatureExtractor(ABC, nn.Module):
         """
         Check if the feature extractor should be unfreezed.
         """
-        if self.frozen and self.unfreeze_after_n_epochs > 0 and current_epoch >= self.unfreeze_after_n_epochs:
+        if (
+            self.frozen
+            and self.unfreeze_after_n_epochs > 0
+            and current_epoch >= self.unfreeze_after_n_epochs
+        ):
             print(f"Unfreezing feature extractor at epoch {current_epoch}")
             self.frozen = False
             c = 0
             for layer in list(self.feature_extractor.children())[::-1]:
-                if isinstance(layer, nn.Linear) or isinstance(layer, nn.Conv2d) or isinstance(layer, nn.Sequential):
+                if (
+                    isinstance(layer, nn.Linear)
+                    or isinstance(layer, nn.Conv2d)
+                    or isinstance(layer, nn.Sequential)
+                ):
                     c += 1
                     if c > self.unfreeze_last_n_blocks:
                         break
