@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torchvision import models
 from .base_feature_extractor import BaseFeatureExtractor
+from typing import Any, Dict
 
 
 class ResNetFeatureExtractor(BaseFeatureExtractor):
@@ -64,7 +65,7 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
         image_features = self.linear(image_features)
         return image_features
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> Dict[str, Any]:
         base_dict = super().to_dict()
         base_dict["model_name"] = self.model_name
         base_dict["pretrained"] = self.pretrained

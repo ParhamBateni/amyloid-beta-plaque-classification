@@ -100,7 +100,7 @@ class BaseRunner(ABC):
                 )
             )
         # Progress bar
-        callbacks.append(RichProgressBar(refresh_rate=1, leave=True))
+        callbacks.append(RichProgressBar(leave=True))
 
         enable_checkpointing = False
         for callback in callbacks:
@@ -109,6 +109,8 @@ class BaseRunner(ABC):
                 break
 
         return pl.Trainer(
+            accelerator="gpu" if torch.cuda.is_available() else "cpu",
+            devices=1 if torch.cuda.is_available() else None,
             max_epochs=self.config.general_config.training.num_epochs,
             enable_checkpointing=enable_checkpointing,
             enable_progress_bar=True,

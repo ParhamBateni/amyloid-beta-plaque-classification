@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Tuple, Callable, Iterable
+from typing import Any, Tuple, Callable, Iterable, Dict
 
 from .base_lightning_self_supervised_module import BaseLightningSelfSupervisedModule
 from models.modules.supervised.feature_extractors.base_feature_extractor import (
@@ -28,7 +28,7 @@ class LightningSimCLRModule(BaseLightningSelfSupervisedModule):
         ] = torch.optim.AdamW,
         optimizer_kwargs: dict = {},
         temperature: float = 0.5,
-        projection_head_sizes: tuple[int, int] = (128, 64),
+        projection_head_sizes: Tuple[int, int] = (128, 64),
         projection_head_activation: str = "relu",  # or "tanh"
     ):
         super().__init__(
@@ -81,7 +81,7 @@ class LightningSimCLRModule(BaseLightningSelfSupervisedModule):
 
     def _forward_and_loss(
         self, x: torch.Tensor
-    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         weak_projected_features = self.projection_head(
             self.feature_extractor(x[:, 0, :, :])
         )

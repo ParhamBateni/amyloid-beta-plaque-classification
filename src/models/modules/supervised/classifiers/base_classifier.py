@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import torch
 import torch.nn as nn
+from typing import Any, Dict
 
 
 class BaseClassifier(ABC, nn.Module):
@@ -57,7 +58,7 @@ class BaseClassifier(ABC, nn.Module):
 
     @staticmethod
     def create_classifier(
-        classifier_name: str, input_size: int, output_size: int, classifier_config: dict
+        classifier_name: str, input_size: int, output_size: int, classifier_config: Dict[str, Any]
     ) -> "BaseClassifier":
         full_cfg = {
             "input_size": input_size,
@@ -75,7 +76,7 @@ class BaseClassifier(ABC, nn.Module):
         else:
             raise ValueError(f"Classifier {classifier_name} not found")
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> Dict[str, Any]:
         """
         Convert the classifier to a dictionary.
         """

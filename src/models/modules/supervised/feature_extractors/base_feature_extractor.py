@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import torch
 import torch.nn as nn
+from typing import Any, Dict
 
 
 class BaseFeatureExtractor(ABC, nn.Module):
@@ -97,7 +98,7 @@ class BaseFeatureExtractor(ABC, nn.Module):
 
     @staticmethod
     def create_feature_extractor(
-        feature_extractor_name: str, input_dim: int, feature_extractor_config: dict
+        feature_extractor_name: str, input_dim: int, feature_extractor_config: Dict[str, Any]
     ) -> "BaseFeatureExtractor":
         if feature_extractor_name == "simple_cnn":
             from .simple_cnn_feature_extractor import SimpleCNNFeatureExtractor
@@ -112,7 +113,7 @@ class BaseFeatureExtractor(ABC, nn.Module):
         else:
             raise ValueError(f"Feature extractor {feature_extractor_name} not found")
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> Dict[str, Any]:
         """
         Convert the feature extractor to a dictionary.
         """

@@ -1,6 +1,6 @@
 import pytorch_lightning as pl
 import torch
-from typing import Any, Callable, Iterable, Tuple
+from typing import Any, Callable, Iterable, Tuple, Dict
 from abc import ABC, abstractmethod
 
 from models.modules.supervised.feature_extractors.base_feature_extractor import (
@@ -53,7 +53,7 @@ class BaseLightningSelfSupervisedModule(pl.LightningModule, ABC):
     @abstractmethod
     def _forward_and_loss(
         self, x: torch.Tensor
-    ) -> Tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Perform a full forward pass and compute the training/validation loss.
 
@@ -86,15 +86,16 @@ class BaseLightningSelfSupervisedModule(pl.LightningModule, ABC):
         loss, metrics = self._forward_and_loss(x)
         self._train_loss_sum += float(loss.item())
 
-        # Log base loss and any additional metrics
-        self.log("train_loss", loss, prog_bar=True)
-        for key, value in metrics.items():
-            self.log(f"train_{key}", value, prog_bar=False)
+        if len(metrics) > 1:
+             # Log base loss and any additional metrics
+            for key, value in metrics.items():
+                self.log(f"train_{key}", value, prog_bar=False)
         return loss
 
     def on_train_epoch_end(self):
         avg_loss = self._train_loss_sum / max(1, self.trainer.num_training_batches)
         self.train_losses.append(round(float(avg_loss), 4))
+        self.log("train_avg_loss", avg_loss, prog_bar=True)
         self._train_loss_sum = 0.0
 
     def configure_optimizers(self):
