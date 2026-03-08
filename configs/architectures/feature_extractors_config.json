@@ -41,5 +41,11 @@
         "cv_grid_search":{
             "output_size": [64, 128, 256]
         }
+    },
+    "h1_optimus": {
+        "pretrained": true,
+        "freeze": true,
+        "unfreeze_after_n_epochs": 0,
+        "unfreeze_last_n_blocks": 0
     }
 }
