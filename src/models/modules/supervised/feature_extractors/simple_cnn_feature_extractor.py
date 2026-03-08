@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from .base_feature_extractor import BaseFeatureExtractor
+from typing import Any, Dict
 
 
 class SimpleCNNFeatureExtractor(BaseFeatureExtractor):
@@ -46,7 +47,7 @@ class SimpleCNNFeatureExtractor(BaseFeatureExtractor):
         image_features = self.feature_extractor(x_image)
         return image_features
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> Dict[str, Any]:
         base_dict = super().to_dict()
         base_dict["feature_extractor"] = str(self.feature_extractor)
         return base_dict

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Tuple, Callable, Iterable
+from typing import Any, Tuple, Callable, Iterable, Dict
 
 from .base_lightning_self_supervised_module import BaseLightningSelfSupervisedModule
 from models.modules.supervised.feature_extractors.base_feature_extractor import (
@@ -127,7 +127,7 @@ class LightningVAEModule(BaseLightningSelfSupervisedModule):
         recon_x: torch.Tensor,
         mu: torch.Tensor,
         logvar: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if self.reconstruction_loss == "bce":
             recon_loss = F.binary_cross_entropy(recon_x, x, reduction="mean")
         elif self.reconstruction_loss == "l1":
@@ -143,7 +143,7 @@ class LightningVAEModule(BaseLightningSelfSupervisedModule):
 
     def _forward_and_loss(
         self, x: torch.Tensor
-    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Implementation of the generic self-supervised loss interface for a VAE.
         """

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from .base_classifier import BaseClassifier
-from typing import List
+from typing import List, Dict, Any
 
 
 class MLPClassifier(BaseClassifier):
@@ -34,7 +34,7 @@ class MLPClassifier(BaseClassifier):
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         return self.classifier(X)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> Dict[str, Any]:
         base_dict = super().to_dict()
         base_dict["classifier"] = str(self.classifier)
         base_dict["dropout_rate"] = self.dropout_rate

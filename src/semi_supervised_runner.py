@@ -51,7 +51,7 @@ class SemiSupervisedRunner(BaseRunner):
         )
         train_labeled_data_df, val_labeled_data_df = train_test_split(
             train_labeled_data_df,
-            test_size=self.config.general_config.training.val_size,
+            test_size=self.config.general_config.training.val_size/(1-self.config.general_config.training.test_size),
             stratify=train_labeled_data_df["Label"],
             random_state=self.config.general_config.system.random_seed,
         )
@@ -296,7 +296,8 @@ class SemiSupervisedRunner(BaseRunner):
 
         # Train and test
         trainer.fit(pl_module, datamodule=data_module)
-        trainer.test(pl_module, datamodule=data_module)
+        # Use best checkpoint for test (important when early stopping is used)
+        trainer.test(pl_module, datamodule=data_module, ckpt_path="best")
 
         return (
             pl_module.train_losses,
@@ -309,8 +310,9 @@ class SemiSupervisedRunner(BaseRunner):
 
     def _cross_validate(self):
         """Run cross-validation for semi-supervised learning."""
+        num_folds = round(1 / self.config.general_config.training.test_size)
         kfold = StratifiedKFold(
-            n_splits=int(1 // self.config.general_config.training.test_size),
+            n_splits=num_folds,
             shuffle=True,
             random_state=self.config.general_config.system.random_seed,
         )
@@ -325,14 +327,14 @@ class SemiSupervisedRunner(BaseRunner):
 
         for fold, (train_idx, test_idx) in tqdm(
             enumerate(kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
-            total=1 // self.config.general_config.training.test_size,
+            total=num_folds,
             desc="Cross-validating",
         ):
             train_labeled_data_df = self.labeled_data_df.iloc[train_idx]
             test_labeled_data_df = self.labeled_data_df.iloc[test_idx]
             train_labeled_data_df, val_labeled_data_df = train_test_split(
                 train_labeled_data_df,
-                test_size=self.config.general_config.training.val_size,
+                test_size=self.config.general_config.training.val_size/(1-self.config.general_config.training.test_size),
                 stratify=train_labeled_data_df["Label"],
                 random_state=self.config.general_config.system.random_seed,
             )

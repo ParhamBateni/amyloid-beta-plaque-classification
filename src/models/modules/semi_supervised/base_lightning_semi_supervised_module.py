@@ -89,7 +89,7 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
 
     def _search_best_class_thresholds(
         self, probs: np.ndarray, labels: np.ndarray
-    ) -> tuple[np.ndarray, float]:
+    ) -> Tuple[np.ndarray, float]:
         """
         Search per-class confidence thresholds that maximize macro-F1
         when using a thresholded decision rule.

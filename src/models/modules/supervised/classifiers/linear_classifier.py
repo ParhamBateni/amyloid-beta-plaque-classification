@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from typing import Any, Dict
 from .base_classifier import BaseClassifier
 
 
@@ -17,7 +18,7 @@ class LinearClassifier(BaseClassifier):
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         return self.classifier(X)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> Dict[str, Any]:
         base_dict = super().to_dict()
         base_dict["classifier"] = str(self.classifier)
         return base_dict

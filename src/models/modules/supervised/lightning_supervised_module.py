@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Tuple, Optional
 from sklearn.metrics import f1_score
 import numpy as np
 
@@ -49,7 +49,7 @@ class LightningSupervisedModule(pl.LightningModule):
         self.threshold_min = threshold_min
         self.threshold_max = threshold_max
         self.threshold_steps = threshold_steps
-        self.class_thresholds: np.ndarray | None = None
+        self.class_thresholds: Optional[np.ndarray] = None
 
         self.criterion = criterion
         self.optimizer = optimizer
@@ -212,7 +212,7 @@ class LightningSupervisedModule(pl.LightningModule):
 
     def _search_best_class_thresholds(
         self, probs: np.ndarray, labels: np.ndarray
-    ) -> tuple[np.ndarray, float]:
+    ) -> Tuple[np.ndarray, float]:
         """
         Search per-class confidence thresholds that maximize macro-F1
         when using a thresholded decision rule.
@@ -264,8 +264,8 @@ class LightningSupervisedModule(pl.LightningModule):
     def predict(
         self,
         x_image: torch.Tensor,
-        x_features: torch.Tensor | None = None,
-        use_thresholds: bool | None = None,
+        x_features: Optional[torch.Tensor] = None,
+        use_thresholds: Optional[bool] = None,
     ) -> torch.Tensor:
         """
         Public prediction API for new data.
