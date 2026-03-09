@@ -4,10 +4,10 @@
     },
     "mlp": {
         "dropout_rate": 0.2,
-        "hidden_layers": [32],
+        "hidden_layers": "32",
         "hyperparameter_tuning": {
             "dropout_rate": [0.1, 0.2],
-            "hidden_layers": [[32], [64]]
+            "hidden_layers": ["32", "64"]
         }
     }
 }

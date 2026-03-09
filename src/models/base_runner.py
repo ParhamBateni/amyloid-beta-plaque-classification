@@ -8,7 +8,11 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, RichProgressBar
 import torch
 from utils.seed_utils import set_random_seeds
-from utils.logging_utils import StdoutRedirector
+from utils.logging_utils import (
+    AnsiStrippingFileRedirector,
+    setup_pytorch_lightning_logging,
+    FileTQDMProgressBar,
+)
 import optuna
 from utils.hyperparameter_tuning_utils import (
     run_optuna_study,
@@ -17,6 +21,7 @@ from utils.hyperparameter_tuning_utils import (
 )
 from typing import List, Tuple
 import json
+import copy
 
 
 class BaseRunner(ABC):
@@ -66,20 +71,20 @@ class BaseRunner(ABC):
 
         def objective(trial, study):
             params = {}
-
+            copy_runner = copy.deepcopy(self)
             # General config (training)
-            if hasattr(self.config, "general_config") and hasattr(
-                self.config.general_config, "hyperparameter_tuning"
+            if hasattr(copy_runner.config, "general_config") and hasattr(
+                copy_runner.config.general_config, "hyperparameter_tuning"
             ):
-                ht = self.config.general_config.hyperparameter_tuning
+                ht = copy_runner.config.general_config.hyperparameter_tuning
                 ht_dict = ht.to_dict() if hasattr(ht, "to_dict") else dict(ht)
                 params.update(
                     suggest_params_from_dict(trial, ht_dict, "general_config")
                 )
 
             # Mode-specific config (supervised, semi_supervised, self_supervised)
-            section_name, config_key = self._get_tuning_config_section()
-            section = getattr(self.config, section_name, None)
+            section_name, config_key = copy_runner._get_tuning_config_section()
+            section = getattr(copy_runner.config, section_name, None)
             if section is not None:
                 mode_config = getattr(section, config_key, None)
                 if mode_config is not None and hasattr(
@@ -94,11 +99,13 @@ class BaseRunner(ABC):
                     )
 
             for key, value in params.items():
-                set_nested(self.config, key, value)
+                set_nested(copy_runner.config, key, value)
 
             # Feature extractor and classifier params
-            fe_name, clf_name = self._get_feature_extractor_and_classifier_names()
-            fe_cfg = self.config.architectures.feature_extractors_config[fe_name]
+            fe_name, clf_name = (
+                copy_runner._get_feature_extractor_and_classifier_names()
+            )
+            fe_cfg = copy_runner.config.architectures.feature_extractors_config[fe_name]
             if (
                 hasattr(fe_cfg, "hyperparameter_tuning")
                 and fe_cfg.hyperparameter_tuning
@@ -109,10 +116,10 @@ class BaseRunner(ABC):
                     trial, ht_dict, f"fe_{fe_name}"
                 ).items():
                     param_name = k.replace(f"fe_{fe_name}.", "")
-                    self.config.architectures.feature_extractors_config[fe_name][
+                    copy_runner.config.architectures.feature_extractors_config[fe_name][
                         param_name
                     ] = v
-            clf_cfg = self.config.architectures.classifiers_config[clf_name]
+            clf_cfg = copy_runner.config.architectures.classifiers_config[clf_name]
             if (
                 hasattr(clf_cfg, "hyperparameter_tuning")
                 and clf_cfg.hyperparameter_tuning
@@ -123,18 +130,18 @@ class BaseRunner(ABC):
                     trial, ht_dict, f"clf_{clf_name}"
                 ).items():
                     param_name = k.replace(f"clf_{clf_name}.", "")
-                    self.config.architectures.classifiers_config[clf_name][
+                    copy_runner.config.architectures.classifiers_config[clf_name][
                         param_name
                     ] = v
 
             # Optional: mode-specific extra tuning (e.g. SSL method params for self_supervised)
-            self._apply_extra_tuning_params(trial)
+            copy_runner._apply_extra_tuning_params(trial)
 
             # Always create trial folder and track everything (including duplicates)
             trial_folder = os.path.join(ht_base, f"trial_{trial.number}")
             os.makedirs(trial_folder, exist_ok=True)
-            self.runs_folder = trial_folder
-            self.config.run_id = f"trial_{trial.number}"
+            copy_runner.runs_folder = trial_folder
+            copy_runner.config.run_id = f"trial_{trial.number}"
 
             # Skip re-running CV if we've already seen these exact params (avoids duplicate work)
             trial_params = dict(trial.params)
@@ -159,25 +166,37 @@ class BaseRunner(ABC):
                         )
                     return t.value
 
-            with StdoutRedirector(
-                os.path.join(trial_folder, "cv_output.txt"),
-            ):
-                with open(os.path.join(trial_folder, "params.json"), "w") as f:
-                    json.dump(trial.params, f, indent=2)
-                (
-                    _,
-                    kfold_val_losses,
-                    _,
-                    _,
-                    _,
-                    _,
-                    _,
-                ) = self._cross_validate()
-                # # Sample loss
-                # # if trial.number >= 4:
-                # #     raise Exception("Stopping at trial 4")
-                # import numpy as np
-                # kfold_val_losses = np.random.rand(5)
+            with open(os.path.join(trial_folder, "params.json"), "w") as f:
+                json.dump(trial.params, f, indent=2)
+
+            # with StdoutRedirector(
+            #     os.path.join(trial_folder, "cv_output.txt"),
+            # ):
+            (
+                _,
+                kfold_val_losses,
+                _,
+                _,
+                _,
+                _,
+                _,
+            ) = copy_runner._cross_validate(
+                log_file_writer=AnsiStrippingFileRedirector(
+                    os.path.join(trial_folder, "cv_output.txt")
+                )
+            )
+
+            # from tqdm import tqdm
+            # import time
+            # for i in tqdm(range(100), file=log_file_writer):
+            #     time.sleep(0.1)
+            #     print(f"Cross-validation fold {i} for trial {trial.number}...", file=log_file_writer)
+            # self.log_file.flush()
+            # # Sample loss
+            # # if trial.number >= 4:
+            # #     raise Exception("Stopping at trial 4")
+            # import numpy as np
+            # kfold_val_losses = np.random.rand(5)
 
             mean_loss = sum(kfold_val_losses) / len(kfold_val_losses)
             cv_std = (
@@ -241,7 +260,9 @@ class BaseRunner(ABC):
             "weight_decay": self.config.general_config.training.weight_decay,
         }
 
-    def _create_base_trainer(self, callbacks: List[pl.Callback] = None, logger=False):
+    def _create_base_trainer(
+        self, callbacks: List[pl.Callback] = None, log_file_path: str = None
+    ):
         """Create PyTorch Lightning trainer."""
         if callbacks is None:
             callbacks = []
@@ -257,13 +278,19 @@ class BaseRunner(ABC):
                 )
             )
         # Progress bar
-        callbacks.append(RichProgressBar(leave=True))
+        if log_file_path is not None:
+            callbacks.append(FileTQDMProgressBar(file_path=log_file_path))
+        else:
+            callbacks.append(RichProgressBar(leave=True))
 
         enable_checkpointing = False
         for callback in callbacks:
             if isinstance(callback, ModelCheckpoint):
                 enable_checkpointing = True
                 break
+
+        if log_file_path is not None:
+            setup_pytorch_lightning_logging(log_file_path)
 
         return pl.Trainer(
             accelerator="gpu" if torch.cuda.is_available() else "cpu",
@@ -275,7 +302,8 @@ class BaseRunner(ABC):
             log_every_n_steps=1,
             num_sanity_val_steps=0,
             check_val_every_n_epoch=self.config.general_config.training.early_stop_check_val_every_n_epoch,
-            logger=logger,
+            logger=False,
+            enable_model_summary=False,
         )
 
     @staticmethod

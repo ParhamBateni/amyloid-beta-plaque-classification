@@ -73,7 +73,7 @@ def run_optuna_study(
         sampler=optuna.samplers.TPESampler(
             n_startup_trials=5,
             seed=44,
-            multivariate=True,
+            multivariate=False,
         ),
     )
 

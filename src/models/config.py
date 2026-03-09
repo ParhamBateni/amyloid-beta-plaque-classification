@@ -18,9 +18,24 @@ class Config:
             self.config[name] = value
 
     def __getattr__(self, name: str):
-        if name not in self.config:
+        """
+        Fallback attribute access for config fields.
+
+        Important: avoid touching self.config when it's not yet initialized
+        and never try to resolve Python magic attributes (dunder names),
+        otherwise things like copy.deepcopy() that probe for __getstate__ /
+        __setstate__ can recurse indefinitely.
+        """
+        # Ignore Python's special/magic attributes – signal "not found" quickly
+        if name.startswith("__") and name.endswith("__"):
             raise AttributeError(f"Config has no attribute {name}")
-        return self.config[name]
+
+        # During object construction / copying, 'config' might not be set yet
+        cfg = self.__dict__.get("config", None)
+        if cfg is None or name not in cfg:
+            raise AttributeError(f"Config has no attribute {name}")
+
+        return cfg[name]
 
     def _indented_str(self, indent: int = 1, keep_cv_grid_search: bool = False):
         return (

@@ -14,11 +14,12 @@ class MLPClassifier(BaseClassifier):
         input_size: int,
         output_size: int,
         dropout_rate: float = 0.2,
-        hidden_layers: List[int] = [256],
+        hidden_layers: List[int] | str = [256],
         **kwargs,
     ):
         super().__init__(input_size, output_size, **kwargs)
-
+        if isinstance(hidden_layers, str):
+            hidden_layers = [int(layer) for layer in hidden_layers.split(",")]
         # Exact classifier architecture from original SimpleCNN
         layers = []
         for i in range(len(hidden_layers)):

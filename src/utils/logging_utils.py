@@ -6,6 +6,11 @@ import os
 import re
 import sys
 from typing import TextIO
+import logging
+from pytorch_lightning.loggers import Logger
+from pytorch_lightning.callbacks import RichProgressBar
+from pytorch_lightning.callbacks.progress.tqdm_progress import TQDMProgressBar
+from tqdm import tqdm
 
 # Strip ANSI escape sequences (colors, cursor control) so log files are plain text
 _ANSI_ESCAPE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -16,14 +21,21 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_ESCAPE.sub("", text)
 
 
-class AnsiStrippingFileWrapper:
+class AnsiStrippingFileRedirector:
     """File-like wrapper that strips ANSI escape codes before writing (for log files)."""
 
-    def __init__(self, file_obj: TextIO):
-        self._file = file_obj
+    def __init__(self, file_path: str, redirect_to_stdout: bool = False):
+        self._redirect_to_stdout = redirect_to_stdout
+        try:
+            self._file = open(file_path, "a")
+        except Exception as e:
+            print(f"Error opening file {file_path}: {e}")
+            raise e
 
-    def write(self, obj: str) -> None:
-        self._file.write(_strip_ansi(obj))
+    def write(self, obj: str, *args, **kwargs) -> None:
+        if self._redirect_to_stdout:
+            print(obj, *args, **kwargs)
+        self._file.write(_strip_ansi(obj).strip() + "\n")
 
     def flush(self) -> None:
         self._file.flush()
@@ -31,90 +43,58 @@ class AnsiStrippingFileWrapper:
     def __getattr__(self, name):
         return getattr(self._file, name)
 
+    @property
+    def file_path(self) -> str:
+        return self._file.name
 
-class TeeOutput:
-    """
-    A class that writes to multiple output streams simultaneously.
 
-    This is useful for logging output to both console and file at the same time.
-    """
+class FileTQDMProgressBar(TQDMProgressBar):
 
-    def __init__(self, *files: TextIO):
-        """
-        Initialize TeeOutput with multiple file-like objects.
+    def __init__(self, file_path, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.file = open(file_path, "a")
 
-        Args:
-            *files: File-like objects to write to (e.g., sys.stdout, open file)
-        """
-        self.files = files
-        # Use the first file (usually sys.stdout) as the primary for attribute delegation
-        self.primary = files[0] if files else None
+    def init_train_tqdm(self):
+        return tqdm(
+            desc=self.train_description,
+            position=2 * self.process_position,
+            disable=self.is_disabled,
+            leave=True,
+            dynamic_ncols=True,
+            file=self.file,
+        )
 
-    def write(self, obj: str) -> None:
-        """
-        Write the given object to all registered files.
+    def init_validation_tqdm(self):
+        return tqdm(
+            desc="Validation",
+            position=2 * self.process_position + 1,
+            disable=self.is_disabled,
+            leave=False,
+            dynamic_ncols=True,
+            file=self.file,
+        )
 
-        Args:
-            obj: String to write to all files
-        """
-        for f in self.files:
-            f.write(obj)
-            f.flush()
-
-    def flush(self) -> None:
-        """Flush all registered files."""
-        for f in self.files:
-            f.flush()
-
-    def close(self) -> None:
-        """Close all registered files."""
-        for f in self.files:
-            if hasattr(f, "close") and f != sys.stdout and f != sys.stderr:
-                f.close()
-
-    def __getattr__(self, name):
-        """Delegate attribute access to the primary file object."""
-        if self.primary is not None:
-            return getattr(self.primary, name)
-        raise AttributeError(
-            f"'{self.__class__.__name__}' object has no attribute '{name}'"
+    def init_test_tqdm(self):
+        return tqdm(
+            desc="Testing",
+            position=2 * self.process_position,
+            disable=self.is_disabled,
+            leave=True,
+            dynamic_ncols=True,
+            file=self.file,
         )
 
 
-class StdoutRedirector:
-    """
-    A class to manage redirection of sys.stdout to a file (optionally keeping the console).
-    Use as a context manager or with explicit begin/end.
-    """
+def setup_pytorch_lightning_logging(log_file_path: str):
+    """Setup PyTorch Lightning logging to a file."""
+    pl_logger = logging.getLogger("pytorch_lightning")
 
-    def __init__(self, file_path: str):
-        self.original_stdout = None
-        self.active_tee = None
-        self.log_file = None
-        self.file_path = file_path
+    handler = logging.FileHandler(log_file_path)
 
-    def redirect(self):
-        self.original_stdout = sys.stdout
-        self.log_file = open(self.file_path, "a")
-        # Strip ANSI codes when writing to log file (no ESC[ or color codes in logs)
-        self.active_tee = TeeOutput(
-            sys.stdout,
-            AnsiStrippingFileWrapper(self.log_file),
-        )
-        sys.stdout = self.active_tee
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 
-    def restore(self):
-        if self.original_stdout is not None:
-            sys.stdout = self.original_stdout
-            self.active_tee = None
-            self.log_file = None
-
-    def __enter__(self):
-        self.redirect()
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.restore()
+    handler.setFormatter(formatter)
+    pl_logger.addHandler(handler)
 
 
 def print_log(
