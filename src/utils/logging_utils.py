@@ -3,13 +3,33 @@ Logging and output utilities.
 """
 
 import os
-
-"""
-Utility for redirecting output to multiple streams simultaneously.
-"""
-
+import re
 import sys
 from typing import TextIO
+
+# Strip ANSI escape sequences (colors, cursor control) so log files are plain text
+_ANSI_ESCAPE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from a string."""
+    return _ANSI_ESCAPE.sub("", text)
+
+
+class AnsiStrippingFileWrapper:
+    """File-like wrapper that strips ANSI escape codes before writing (for log files)."""
+
+    def __init__(self, file_obj: TextIO):
+        self._file = file_obj
+
+    def write(self, obj: str) -> None:
+        self._file.write(_strip_ansi(obj))
+
+    def flush(self) -> None:
+        self._file.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._file, name)
 
 
 class TeeOutput:
@@ -76,7 +96,11 @@ class StdoutRedirector:
     def redirect(self):
         self.original_stdout = sys.stdout
         self.log_file = open(self.file_path, "a")
-        self.active_tee = TeeOutput(sys.stdout, self.log_file)
+        # Strip ANSI codes when writing to log file (no ESC[ or color codes in logs)
+        self.active_tee = TeeOutput(
+            sys.stdout,
+            AnsiStrippingFileWrapper(self.log_file),
+        )
         sys.stdout = self.active_tee
 
     def restore(self):

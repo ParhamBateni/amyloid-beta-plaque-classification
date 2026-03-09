@@ -1,5 +1,9 @@
 {
     "latent_dim": 64,
     "beta": 1.0,
-    "reconstruction_loss": "mse"
+    "reconstruction_loss": "mse",
+    "hyperparameter_tuning": {
+        "latent_dim": [32, 64],
+        "beta": [0.5, 1.0]
+    }
 }

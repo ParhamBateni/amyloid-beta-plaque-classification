@@ -17,16 +17,23 @@ if __name__ == "__main__":
     parser.add_argument(
         "--train_mode",
         type=str,
-        default="self_supervised",
+        default="supervised",
         choices=["supervised", "semi_supervised", "self_supervised"],
         help="Training mode to use",
     )
     parser.add_argument(
         "--run_mode",
         type=str,
-        default="single",
-        choices=["single", "cross_validate", "optimize_hyperparameters"],
+        default="hyperparameter_tuning",
+        choices=["single", "cross_validate", "hyperparameter_tuning"],
         help="Run mode to use",
+    )
+
+    parser.add_argument(
+        "--n_trials",
+        type=int,
+        default=2,
+        help="Number of trials to run for hyperparameter tuning",
     )
     # Parse arguments
     args = parser.parse_args()
@@ -39,13 +46,13 @@ if __name__ == "__main__":
         log_mode=config.general_config.system.log_mode,
         end="\n\n",
     )
-    runner = BaseRunner.create_runner(args.train_mode, config)
+    runner = BaseRunner.create_runner(args.train_mode, args.run_mode, config)
 
     if args.run_mode == "single":
         runner.run_single_experiment()
     elif args.run_mode == "cross_validate":
         runner.cross_validate()
-    elif args.run_mode == "optimize_hyperparameters":
-        runner.optimize_hyperparameters()
+    elif args.run_mode == "hyperparameter_tuning":
+        runner.hyperparameter_tuning(args.n_trials)
     else:
         raise ValueError(f"Invalid run mode: {args.run_mode}")

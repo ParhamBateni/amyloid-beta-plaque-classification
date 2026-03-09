@@ -131,18 +131,30 @@ class BaseFeatureExtractor(ABC, nn.Module):
 
 
 class H1OptimusFeatureExtractor(BaseFeatureExtractor):
-    def __init__(self, input_dim: int, freeze: bool = False, unfreeze_last_n_blocks: int = 0, unfreeze_after_n_epochs: int = 0):
-        super().__init__(input_dim, 1536, freeze, unfreeze_last_n_blocks, unfreeze_after_n_epochs)
+    def __init__(
+        self,
+        input_dim: int,
+        freeze: bool = False,
+        unfreeze_last_n_blocks: int = 0,
+        unfreeze_after_n_epochs: int = 0,
+    ):
+        super().__init__(
+            input_dim, 1536, freeze, unfreeze_last_n_blocks, unfreeze_after_n_epochs
+        )
 
         login()
         model = timm.create_model(
-            "hf-hub:bioptimus/H-optimus-1", pretrained=True, init_values=1e-5, dynamic_img_size=False
+            "hf-hub:bioptimus/H-optimus-1",
+            pretrained=True,
+            init_values=1e-5,
+            dynamic_img_size=False,
         )
         self.feature_extractor = model
         self.post_init()
 
     def forward(self, x):
         return self.feature_extractor(x)
+
 
 if __name__ == "__main__":
     feature_extractor = H1OptimusFeatureExtractor(input_dim=3, output_size=128)

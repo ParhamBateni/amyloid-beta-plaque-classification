@@ -37,8 +37,8 @@ from models.modules.semi_supervised.base_lightning_semi_supervised_module import
 class SemiSupervisedRunner(BaseRunner):
     """Runner for semi-supervised learning experiments."""
 
-    def __init__(self, config: Config):
-        super().__init__(config)
+    def __init__(self, config: Config, run_mode: str):
+        super().__init__(config, run_mode)
 
     def run_single_experiment(self):
         """Run a single semi-supervised experiment."""
@@ -51,7 +51,8 @@ class SemiSupervisedRunner(BaseRunner):
         )
         train_labeled_data_df, val_labeled_data_df = train_test_split(
             train_labeled_data_df,
-            test_size=self.config.general_config.training.val_size/(1-self.config.general_config.training.test_size),
+            test_size=self.config.general_config.training.val_size
+            / (1 - self.config.general_config.training.test_size),
             stratify=train_labeled_data_df["Label"],
             random_state=self.config.general_config.system.random_seed,
         )
@@ -75,7 +76,7 @@ class SemiSupervisedRunner(BaseRunner):
             )
         trainer = self._create_base_trainer(
             callbacks=callbacks,
-            logger=CSVLogger(save_dir=self.runs_folder, name="lightning_logs"),
+            logger=CSVLogger(save_dir=self.runs_folder),
         )
 
         # Redirect all output to log file
@@ -209,8 +210,12 @@ class SemiSupervisedRunner(BaseRunner):
             aggregated_classification_reports_df, folder_path=self.runs_folder
         )
 
-    def optimize_hyperparameters(self):
-        """Optimize hyperparameters for semi-supervised learning."""
+    def _get_tuning_config_section(self):
+        return ("semi_supervised", "semi_supervised_config")
+
+    def _get_feature_extractor_and_classifier_names(self):
+        ssc = self.config.semi_supervised.semi_supervised_config
+        return ssc.feature_extractor_name, ssc.classifier_name
 
     # TODO: This function is not used yet, so it is not implemented.
     def load_model_from_checkpoint(self, checkpoint_path: str, device: str = "cpu"):
@@ -334,7 +339,8 @@ class SemiSupervisedRunner(BaseRunner):
             test_labeled_data_df = self.labeled_data_df.iloc[test_idx]
             train_labeled_data_df, val_labeled_data_df = train_test_split(
                 train_labeled_data_df,
-                test_size=self.config.general_config.training.val_size/(1-self.config.general_config.training.test_size),
+                test_size=self.config.general_config.training.val_size
+                / (1 - self.config.general_config.training.test_size),
                 stratify=train_labeled_data_df["Label"],
                 random_state=self.config.general_config.system.random_seed,
             )
@@ -379,8 +385,7 @@ class SemiSupervisedRunner(BaseRunner):
 
     def _type(self) -> str:
         """Return model type string."""
-        semi_supervised_config = self.config.semi_supervised.semi_supervised_config
-        return f"semi_supervised_{semi_supervised_config.model_name}_{semi_supervised_config.feature_extractor_name}_{semi_supervised_config.classifier_name}"
+        return "semi_supervised"
 
     def _load_dataloaders(
         self,

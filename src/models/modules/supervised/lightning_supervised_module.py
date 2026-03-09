@@ -99,6 +99,10 @@ class LightningSupervisedModule(pl.LightningModule):
         preds = torch.argmax(outputs, dim=1)
         return labels, preds, loss, outputs
 
+    def on_train_epoch_start(self):
+        if hasattr(self.feature_extractor, "check_for_unfreezing"):
+            self.feature_extractor.check_for_unfreezing(self.current_epoch)
+
     def training_step(self, batch: Any, batch_idx: int):
         labels, preds, loss, _ = self._step_common(batch)
         self._train_loss_sum += loss.item()

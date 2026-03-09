@@ -8,5 +8,14 @@
     "num_epochs": 50,
     "learning_rate": 1e-5,
     "weight_decay": 1e-5
+  },
+  "hyperparameter_tuning": {
+    "feature_extractor_name": ["resnet18", "resnet50", "simple_cnn"],
+    "classifier_name": ["linear"],
+    "pretraining": {
+      "num_epochs": [30, 50],
+      "learning_rate": [1e-5, 5e-5],
+      "weight_decay": [1e-6, 1e-5]
+    }
   }
 }

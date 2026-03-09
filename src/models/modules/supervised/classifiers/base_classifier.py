@@ -58,7 +58,10 @@ class BaseClassifier(ABC, nn.Module):
 
     @staticmethod
     def create_classifier(
-        classifier_name: str, input_size: int, output_size: int, classifier_config: Dict[str, Any]
+        classifier_name: str,
+        input_size: int,
+        output_size: int,
+        classifier_config: Dict[str, Any],
     ) -> "BaseClassifier":
         full_cfg = {
             "input_size": input_size,

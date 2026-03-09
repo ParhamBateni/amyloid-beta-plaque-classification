@@ -49,8 +49,8 @@ class SelfSupervisedRunner(BaseRunner):
       2) Train a classifier (e.g. MLP) on top of the pretrained backbone using labeled data.
     """
 
-    def __init__(self, config: Config):
-        super().__init__(config)
+    def __init__(self, config: Config, run_mode: str):
+        super().__init__(config, run_mode)
 
     def run_single_experiment(self):
         """
@@ -68,7 +68,8 @@ class SelfSupervisedRunner(BaseRunner):
         )
         train_labeled_data_df, val_labeled_data_df = train_test_split(
             train_labeled_data_df,
-            test_size=self.config.general_config.training.val_size/(1-self.config.general_config.training.test_size),
+            test_size=self.config.general_config.training.val_size
+            / (1 - self.config.general_config.training.test_size),
             stratify=train_labeled_data_df["Label"],
             random_state=self.config.general_config.system.random_seed,
         )
@@ -89,7 +90,7 @@ class SelfSupervisedRunner(BaseRunner):
             )
         pretraining_trainer = pl.Trainer(
             accelerator="gpu" if torch.cuda.is_available() else "cpu",
-            devices=1 if torch.cuda.is_available() else None,
+            devices=1,
             max_epochs=self.config.self_supervised.self_supervised_config.pretraining.num_epochs,
             enable_checkpointing=enable_checkpointing,
             enable_progress_bar=True,
@@ -250,11 +251,31 @@ class SelfSupervisedRunner(BaseRunner):
             aggregated_classification_reports_df, folder_path=self.runs_folder
         )
 
-    def optimize_hyperparameters(self):
-        """
-        Hyperparameter optimization for self-supervised learning is not implemented yet.
-        """
-        pass
+    def _get_tuning_config_section(self):
+        return ("self_supervised", "self_supervised_config")
+
+    def _get_feature_extractor_and_classifier_names(self):
+        ssc = self.config.self_supervised.self_supervised_config
+        return ssc.feature_extractor_name, ssc.classifier_name
+
+    def _apply_extra_tuning_params(self, trial):
+        """Apply SSL method config (simclr, vae) tuning params."""
+        from utils.hyperparameter_tuning_utils import suggest_params_from_dict
+
+        method = self.config.self_supervised.self_supervised_config.pretraining_method
+        method_cfg = getattr(
+            self.config.self_supervised,
+            f"{method}_config",
+            None,
+        )
+        if method_cfg is not None and hasattr(method_cfg, "hyperparameter_tuning"):
+            ht = method_cfg.hyperparameter_tuning
+            ht_dict = ht.to_dict() if hasattr(ht, "to_dict") else dict(ht)
+            for k, v in suggest_params_from_dict(
+                trial, ht_dict, f"ssl_{method}"
+            ).items():
+                param_name = k.replace(f"ssl_{method}.", "")
+                getattr(self.config.self_supervised, f"{method}_config")[param_name] = v
 
     def _cross_validate(self):
         """Run cross-validation for self-supervised learning.
@@ -279,7 +300,7 @@ class SelfSupervisedRunner(BaseRunner):
 
         pretraining_trainer = pl.Trainer(
             accelerator="gpu" if torch.cuda.is_available() else "cpu",
-            devices=1 if torch.cuda.is_available() else None,
+            devices=1,
             max_epochs=self.config.self_supervised.self_supervised_config.pretraining.num_epochs,
             enable_checkpointing=False,
             enable_progress_bar=True,
@@ -301,7 +322,8 @@ class SelfSupervisedRunner(BaseRunner):
             test_labeled_data_df = self.labeled_data_df.iloc[test_idx]
             train_labeled_data_df, val_labeled_data_df = train_test_split(
                 train_labeled_data_df,
-                test_size=self.config.general_config.training.val_size/(1-self.config.general_config.training.test_size),
+                test_size=self.config.general_config.training.val_size
+                / (1 - self.config.general_config.training.test_size),
                 stratify=train_labeled_data_df["Label"],
                 random_state=self.config.general_config.system.random_seed,
             )
@@ -350,8 +372,12 @@ class SelfSupervisedRunner(BaseRunner):
             kfold_test_labels.append(test_labels)
             kfold_test_preds.append(test_preds)
 
-            if os.path.exists(os.path.join(self.runs_folder, "checkpoints", "best_model.ckpt")):
-                os.remove(os.path.join(self.runs_folder, "checkpoints", "best_model.ckpt"))
+            if os.path.exists(
+                os.path.join(self.runs_folder, "checkpoints", "best_model.ckpt")
+            ):
+                os.remove(
+                    os.path.join(self.runs_folder, "checkpoints", "best_model.ckpt")
+                )
 
         return (
             kfold_train_losses,
@@ -394,15 +420,11 @@ class SelfSupervisedRunner(BaseRunner):
 
     def _type(self) -> str:
         """Return model type string used in run folder naming."""
-        self_supervised_config = self.config.self_supervised.self_supervised_config
-        return (
-            f"self_supervised_"
-            f"{self_supervised_config.pretraining_method}_"
-            f"{self_supervised_config.feature_extractor_name}_"
-            f"{self_supervised_config.classifier_name}"
-        )
+        return "self_supervised"
 
-    def _load_unlabeled_dataloader(self, unlabeled_data_df: pd.DataFrame) -> torch.utils.data.DataLoader:
+    def _load_unlabeled_dataloader(
+        self, unlabeled_data_df: pd.DataFrame
+    ) -> torch.utils.data.DataLoader:
         """Load unlabeled dataloader for self-supervised learning."""
         unlabeled_weak_transforms = trf.Compose(
             [
@@ -449,7 +471,11 @@ class SelfSupervisedRunner(BaseRunner):
         train_labeled_data_df: pd.DataFrame,
         val_labeled_data_df: pd.DataFrame,
         test_labeled_data_df: pd.DataFrame,
-    ) -> Tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
+    ) -> Tuple[
+        torch.utils.data.DataLoader,
+        torch.utils.data.DataLoader,
+        torch.utils.data.DataLoader,
+    ]:
         """Load labeled dataloaders for self-supervised learning."""
         labeled_data_folder_path = os.path.join(
             self.config.general_config.data.data_folder,
@@ -542,11 +568,17 @@ class SelfSupervisedRunner(BaseRunner):
         val_labeled_data_df: pd.DataFrame,
         test_labeled_data_df: pd.DataFrame,
         unlabeled_data_df: pd.DataFrame,
-    ) -> Tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader, torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
+    ) -> Tuple[
+        torch.utils.data.DataLoader,
+        torch.utils.data.DataLoader,
+        torch.utils.data.DataLoader,
+        torch.utils.data.DataLoader,
+    ]:
         """Load dataloaders for self-supervised learning."""
-        return self._load_labeled_dataloaders(train_labeled_data_df, val_labeled_data_df, test_labeled_data_df), self._load_unlabeled_dataloader(unlabeled_data_df)
+        return self._load_labeled_dataloaders(
+            train_labeled_data_df, val_labeled_data_df, test_labeled_data_df
+        ), self._load_unlabeled_dataloader(unlabeled_data_df)
 
-    
     def _run_pretraining(
         self,
         unlabeled_data_df: pd.DataFrame,
@@ -584,11 +616,9 @@ class SelfSupervisedRunner(BaseRunner):
             return feature_extractor
 
         unlabeled_dataloader = self._load_unlabeled_dataloader(unlabeled_data_df)
-        feature_extractor_config = (
-            self.config.architectures.feature_extractors_config[
-                self_supervised_config.feature_extractor_name
-            ].to_dict()
-        )
+        feature_extractor_config = self.config.architectures.feature_extractors_config[
+            self_supervised_config.feature_extractor_name
+        ].to_dict()
         original_freeze_feature_extractor = feature_extractor_config["freeze"]
         feature_extractor_config["freeze"] = False
         feature_extractor = BaseFeatureExtractor.create_feature_extractor(
@@ -632,14 +662,12 @@ class SelfSupervisedRunner(BaseRunner):
         Returns (train_losses, val_losses, train_accuracies, val_accuracies, test_labels, test_preds).
         """
         self_supervised_config = self.config.self_supervised.self_supervised_config
-        (
-            train_labeled_dataloader,
-            val_labeled_dataloader,
-            test_labeled_dataloader
-        ) = self._load_labeled_dataloaders(
-            train_labeled_data_df=train_labeled_data_df,
-            val_labeled_data_df=val_labeled_data_df,
-            test_labeled_data_df=test_labeled_data_df,
+        (train_labeled_dataloader, val_labeled_dataloader, test_labeled_dataloader) = (
+            self._load_labeled_dataloaders(
+                train_labeled_data_df=train_labeled_data_df,
+                val_labeled_data_df=val_labeled_data_df,
+                test_labeled_data_df=test_labeled_data_df,
+            )
         )
         feature_extractor = copy.deepcopy(feature_extractor)
         classifier = BaseClassifier.create_classifier(
@@ -676,7 +704,11 @@ class SelfSupervisedRunner(BaseRunner):
             test_labeled_plaque_dataloader=test_labeled_dataloader,
         )
         finetuning_trainer.fit(pl_module, datamodule=data_module)
-        finetuning_trainer.test(pl_module, datamodule=data_module, ckpt_path=os.path.join(self.runs_folder, "checkpoints", "best_model.ckpt"))
+        finetuning_trainer.test(
+            pl_module,
+            datamodule=data_module,
+            ckpt_path=os.path.join(self.runs_folder, "checkpoints", "best_model.ckpt"),
+        )
         return (
             pl_module.train_losses,
             pl_module.val_losses,

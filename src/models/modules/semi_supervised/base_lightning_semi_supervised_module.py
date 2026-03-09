@@ -255,6 +255,8 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
 
     def on_train_epoch_start(self):
         """Log ramp-up weight at start of each epoch."""
+        if hasattr(self.feature_extractor, "check_for_unfreezing"):
+            self.feature_extractor.check_for_unfreezing(self.current_epoch)
         ramp_up_weight = self._get_ramp_up_weight(self.current_epoch)
         self.consistency_lambda = self.consistency_lambda_max * ramp_up_weight
         self.log("ramp_up_weight", ramp_up_weight, prog_bar=True)

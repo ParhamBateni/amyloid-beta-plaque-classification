@@ -1,8 +1,8 @@
 {
     "feature_extractor_name": "resnet18",
     "classifier_name": "linear",
-    "cv_grid_search": {
-        "feature_extractor_name": ["simple_cnn", "resnet18", "resnet34"],
-        "classifier_name": ["linear"]
+    "hyperparameter_tuning": {
+        "feature_extractor_name": ["resnet18", "resnet50", "simple_cnn" ],
+        "classifier_name": ["linear", "mlp"]
     }
 }

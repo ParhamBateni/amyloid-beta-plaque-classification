@@ -34,8 +34,8 @@ from sklearn.metrics import confusion_matrix as sklearn_confusion_matrix
 
 
 class SupervisedRunner(BaseRunner):
-    def __init__(self, config: Config):
-        super().__init__(config)
+    def __init__(self, config: Config, run_mode: str):
+        super().__init__(config, run_mode)
 
     def run_single_experiment(self):
         train_labeled_data_df, test_labeled_data_df = train_test_split(
@@ -46,7 +46,8 @@ class SupervisedRunner(BaseRunner):
         )
         train_labeled_data_df, val_labeled_data_df = train_test_split(
             train_labeled_data_df,
-            test_size=self.config.general_config.training.val_size/(1-self.config.general_config.training.test_size),
+            test_size=self.config.general_config.training.val_size
+            / (1 - self.config.general_config.training.test_size),
             stratify=train_labeled_data_df["Label"],
             random_state=self.config.general_config.system.random_seed,
         )
@@ -68,7 +69,7 @@ class SupervisedRunner(BaseRunner):
             )
         trainer = self._create_base_trainer(
             callbacks=callbacks,
-            logger=CSVLogger(save_dir=self.runs_folder, name="lightning_logs"),
+            logger=CSVLogger(save_dir=self.runs_folder),
         )
 
         # Redirect all output to log file
@@ -193,8 +194,12 @@ class SupervisedRunner(BaseRunner):
             aggregated_classification_reports_df, folder_path=self.runs_folder
         )
 
-    def optimize_hyperparameters(self):
-        pass
+    def _get_tuning_config_section(self):
+        return ("supervised", "supervised_config")
+
+    def _get_feature_extractor_and_classifier_names(self):
+        sc = self.config.supervised.supervised_config
+        return sc.feature_extractor_name, sc.classifier_name
 
     def load_model_from_checkpoint(self, checkpoint_path: str, device: str = "cpu"):
         """
@@ -337,7 +342,8 @@ class SupervisedRunner(BaseRunner):
             test_labeled_data_df = self.labeled_data_df.iloc[test_idx]
             train_labeled_data_df, val_labeled_data_df = train_test_split(
                 train_labeled_data_df,
-                test_size=self.config.general_config.training.val_size/(1-self.config.general_config.training.test_size),
+                test_size=self.config.general_config.training.val_size
+                / (1 - self.config.general_config.training.test_size),
                 stratify=train_labeled_data_df["Label"],
                 random_state=self.config.general_config.system.random_seed,
             )
@@ -380,7 +386,7 @@ class SupervisedRunner(BaseRunner):
         )
 
     def _type(self) -> str:
-        return f"supervised_{self.config.supervised.supervised_config.feature_extractor_name}_{self.config.supervised.supervised_config.classifier_name}"
+        return "supervised"
 
     def _load_dataloaders(
         self,

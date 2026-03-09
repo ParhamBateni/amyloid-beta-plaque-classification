@@ -8,12 +8,21 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, RichProgressBar
 import torch
 from utils.seed_utils import set_random_seeds
-from typing import List
+from utils.logging_utils import StdoutRedirector
+import optuna
+from utils.hyperparameter_tuning_utils import (
+    run_optuna_study,
+    set_nested,
+    suggest_params_from_dict,
+)
+from typing import List, Tuple
+import json
 
 
 class BaseRunner(ABC):
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, run_mode: str):
         self.config = config
+        self.run_mode = run_mode
         # Set all random seeds for reproducibility
         if config.general_config.system.seed_everything:
             set_random_seeds(config.general_config.system.random_seed)
@@ -22,8 +31,13 @@ class BaseRunner(ABC):
         torch.set_float32_matmul_precision("medium")
 
         self.runs_folder = os.path.join(
-            config.general_config.data.runs_folder, f"{self._type()}_{config.run_id}"
+            config.general_config.data.runs_folder, self.run_mode, self._type()
         )
+        if run_mode != "hyperparameter_tuning":
+            # This is done so that the runs folder is the same for all trials in hyperparameter tuning
+            # Which is useful to continue the hyperparameter tuning from the previous trial in case it takes a long time
+            self.runs_folder = os.path.join(self.runs_folder, config.run_id)
+
         os.makedirs(self.runs_folder, exist_ok=True)
         self.config.save_config(folder_path=self.runs_folder)
 
@@ -46,8 +60,153 @@ class BaseRunner(ABC):
     def cross_validate(self):
         pass
 
+    def hyperparameter_tuning(self, n_trials: int):
+        """Run Optuna-based hyperparameter tuning with cross-validation."""
+        ht_base = self.runs_folder
+
+        def objective(trial, study):
+            params = {}
+
+            # General config (training)
+            if hasattr(self.config, "general_config") and hasattr(
+                self.config.general_config, "hyperparameter_tuning"
+            ):
+                ht = self.config.general_config.hyperparameter_tuning
+                ht_dict = ht.to_dict() if hasattr(ht, "to_dict") else dict(ht)
+                params.update(
+                    suggest_params_from_dict(trial, ht_dict, "general_config")
+                )
+
+            # Mode-specific config (supervised, semi_supervised, self_supervised)
+            section_name, config_key = self._get_tuning_config_section()
+            section = getattr(self.config, section_name, None)
+            if section is not None:
+                mode_config = getattr(section, config_key, None)
+                if mode_config is not None and hasattr(
+                    mode_config, "hyperparameter_tuning"
+                ):
+                    ht = mode_config.hyperparameter_tuning
+                    ht_dict = ht.to_dict() if hasattr(ht, "to_dict") else dict(ht)
+                    params.update(
+                        suggest_params_from_dict(
+                            trial, ht_dict, f"{section_name}.{config_key}"
+                        )
+                    )
+
+            for key, value in params.items():
+                set_nested(self.config, key, value)
+
+            # Feature extractor and classifier params
+            fe_name, clf_name = self._get_feature_extractor_and_classifier_names()
+            fe_cfg = self.config.architectures.feature_extractors_config[fe_name]
+            if (
+                hasattr(fe_cfg, "hyperparameter_tuning")
+                and fe_cfg.hyperparameter_tuning
+            ):
+                ht = fe_cfg.hyperparameter_tuning
+                ht_dict = ht.to_dict() if hasattr(ht, "to_dict") else dict(ht)
+                for k, v in suggest_params_from_dict(
+                    trial, ht_dict, f"fe_{fe_name}"
+                ).items():
+                    param_name = k.replace(f"fe_{fe_name}.", "")
+                    self.config.architectures.feature_extractors_config[fe_name][
+                        param_name
+                    ] = v
+            clf_cfg = self.config.architectures.classifiers_config[clf_name]
+            if (
+                hasattr(clf_cfg, "hyperparameter_tuning")
+                and clf_cfg.hyperparameter_tuning
+            ):
+                ht = clf_cfg.hyperparameter_tuning
+                ht_dict = ht.to_dict() if hasattr(ht, "to_dict") else dict(ht)
+                for k, v in suggest_params_from_dict(
+                    trial, ht_dict, f"clf_{clf_name}"
+                ).items():
+                    param_name = k.replace(f"clf_{clf_name}.", "")
+                    self.config.architectures.classifiers_config[clf_name][
+                        param_name
+                    ] = v
+
+            # Optional: mode-specific extra tuning (e.g. SSL method params for self_supervised)
+            self._apply_extra_tuning_params(trial)
+
+            # Always create trial folder and track everything (including duplicates)
+            trial_folder = os.path.join(ht_base, f"trial_{trial.number}")
+            os.makedirs(trial_folder, exist_ok=True)
+            self.runs_folder = trial_folder
+            self.config.run_id = f"trial_{trial.number}"
+
+            # Skip re-running CV if we've already seen these exact params (avoids duplicate work)
+            trial_params = dict(trial.params)
+            for t in study.trials:
+                if (
+                    t.number != trial.number
+                    and t.state == optuna.trial.TrialState.COMPLETE
+                    and t.value is not None
+                    and dict(t.params) == trial_params
+                ):
+                    # Copy cv_std for CSV/tracking
+                    trial.set_user_attr(
+                        "cv_std", t.user_attrs.get("cv_std", float("nan"))
+                    )
+                    with open(os.path.join(trial_folder, "params.json"), "w") as f:
+                        json.dump(trial.params, f, indent=2)
+                    with open(
+                        os.path.join(trial_folder, "cached_from_trial.txt"), "w"
+                    ) as f:
+                        f.write(
+                            f"Cached result from trial {t.number} (duplicate params, skipped CV)\n"
+                        )
+                    return t.value
+
+            with StdoutRedirector(
+                os.path.join(trial_folder, "cv_output.txt"),
+            ):
+                with open(os.path.join(trial_folder, "params.json"), "w") as f:
+                    json.dump(trial.params, f, indent=2)
+                (
+                    _,
+                    kfold_val_losses,
+                    _,
+                    _,
+                    _,
+                    _,
+                    _,
+                ) = self._cross_validate()
+                # # Sample loss
+                # # if trial.number >= 4:
+                # #     raise Exception("Stopping at trial 4")
+                # import numpy as np
+                # kfold_val_losses = np.random.rand(5)
+
+            mean_loss = sum(kfold_val_losses) / len(kfold_val_losses)
+            cv_std = (
+                sum((x - mean_loss) ** 2 for x in kfold_val_losses)
+                / len(kfold_val_losses)
+            ) ** 0.5
+            trial.set_user_attr("cv_std", cv_std)
+            return mean_loss
+
+        run_optuna_study(
+            objective_fn=objective,
+            n_trials=n_trials,
+            study_name=f"{self._type()}_hyperparameter_tuning",
+            log_dir=ht_base,
+            n_jobs=self.config.general_config.training.num_workers,
+        )
+
     @abstractmethod
-    def optimize_hyperparameters(self):
+    def _get_tuning_config_section(self) -> Tuple[str, str]:
+        """Return (section_name, config_key) for mode-specific config, e.g. ('supervised', 'supervised_config')."""
+        pass
+
+    @abstractmethod
+    def _get_feature_extractor_and_classifier_names(self) -> Tuple[str, str]:
+        """Return (feature_extractor_name, classifier_name) from config."""
+        pass
+
+    def _apply_extra_tuning_params(self, trial) -> None:
+        """Override in subclasses to add mode-specific tuning params (e.g. SSL method config). No-op by default."""
         pass
 
     @abstractmethod
@@ -86,9 +245,7 @@ class BaseRunner(ABC):
         """Create PyTorch Lightning trainer."""
         if callbacks is None:
             callbacks = []
-        # logger can be either a Lightning logger or False / None to disable logging
-        if logger is False:
-            logger = None
+        # Pass logger=False through to Trainer to disable default logger and avoid creating lightning_logs/
 
         # Early stopping
         if self.config.general_config.training.early_stop > 0:
@@ -110,7 +267,7 @@ class BaseRunner(ABC):
 
         return pl.Trainer(
             accelerator="gpu" if torch.cuda.is_available() else "cpu",
-            devices=1 if torch.cuda.is_available() else None,
+            devices=1,
             max_epochs=self.config.general_config.training.num_epochs,
             enable_checkpointing=enable_checkpointing,
             enable_progress_bar=True,
@@ -122,18 +279,18 @@ class BaseRunner(ABC):
         )
 
     @staticmethod
-    def create_runner(train_mode: str, config: Config) -> "BaseRunner":
+    def create_runner(train_mode: str, run_mode: str, config: Config) -> "BaseRunner":
         if train_mode == "supervised":
             from supervised_runner import SupervisedRunner
 
-            return SupervisedRunner(config)
+            return SupervisedRunner(config, run_mode)
         elif train_mode == "semi_supervised":
             from semi_supervised_runner import SemiSupervisedRunner
 
-            return SemiSupervisedRunner(config)
+            return SemiSupervisedRunner(config, run_mode)
         elif train_mode == "self_supervised":
             from self_supervised_runner import SelfSupervisedRunner
 
-            return SelfSupervisedRunner(config)
+            return SelfSupervisedRunner(config, run_mode)
         else:
             raise ValueError(f"Invalid train mode: {train_mode}")

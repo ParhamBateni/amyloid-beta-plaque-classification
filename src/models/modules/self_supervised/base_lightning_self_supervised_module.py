@@ -81,13 +81,17 @@ class BaseLightningSelfSupervisedModule(pl.LightningModule, ABC):
            normalized_transformed_image_tensors, extra_features, labels)
         """
 
+    def on_train_epoch_start(self):
+        if hasattr(self.feature_extractor, "check_for_unfreezing"):
+            self.feature_extractor.check_for_unfreezing(self.current_epoch)
+
     def training_step(self, batch: Any, batch_idx: int):
         x = self._unpack_batch(batch)
         loss, metrics = self._forward_and_loss(x)
         self._train_loss_sum += float(loss.item())
 
         if len(metrics) > 1:
-             # Log base loss and any additional metrics
+            # Log base loss and any additional metrics
             for key, value in metrics.items():
                 self.log(f"train_{key}", value, prog_bar=False)
         return loss
