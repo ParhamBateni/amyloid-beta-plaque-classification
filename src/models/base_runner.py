@@ -56,6 +56,10 @@ class BaseRunner(ABC):
             unlabeled_sample_size=config.general_config.data.unlabeled_sample_size,
             train_mode=self._type(),
         )
+        self.log_file_path = os.path.join(self.runs_folder, "full_training_output.log")
+        self.log_file_writer = AnsiStrippingFileRedirector(
+            self.log_file_path, redirect_to_stdout=True
+        )
 
     @abstractmethod
     def run_single_experiment(self):
@@ -68,6 +72,12 @@ class BaseRunner(ABC):
     def hyperparameter_tuning(self, n_trials: int):
         """Run Optuna-based hyperparameter tuning with cross-validation."""
         ht_base = self.runs_folder
+
+        # Reset the log file writer to deep copy the runner for each trial
+        if os.path.exists(self.log_file_path):
+            os.remove(self.log_file_path)
+        self.log_file_writer = None
+        self.log_file_path = None
 
         def objective(trial, study):
             params = {}
@@ -141,7 +151,12 @@ class BaseRunner(ABC):
             trial_folder = os.path.join(ht_base, f"trial_{trial.number}")
             os.makedirs(trial_folder, exist_ok=True)
             copy_runner.runs_folder = trial_folder
-            copy_runner.config.run_id = f"trial_{trial.number}"
+            copy_runner.log_file_path = os.path.join(
+                trial_folder, "full_training_output.log"
+            )
+            copy_runner.log_file_writer = AnsiStrippingFileRedirector(
+                copy_runner.log_file_path, redirect_to_stdout=False
+            )
 
             # Skip re-running CV if we've already seen these exact params (avoids duplicate work)
             trial_params = dict(trial.params)
@@ -169,41 +184,35 @@ class BaseRunner(ABC):
             with open(os.path.join(trial_folder, "params.json"), "w") as f:
                 json.dump(trial.params, f, indent=2)
 
-            # with StdoutRedirector(
-            #     os.path.join(trial_folder, "cv_output.txt"),
-            # ):
             (
                 _,
                 kfold_val_losses,
                 _,
-                _,
-                _,
-                _,
-                _,
-            ) = copy_runner._cross_validate(
-                log_file_writer=AnsiStrippingFileRedirector(
-                    os.path.join(trial_folder, "cv_output.txt")
-                )
-            )
+                kfold_val_accuracies,
+            ) = copy_runner._hyperparameter_tuning()
 
-            # from tqdm import tqdm
-            # import time
-            # for i in tqdm(range(100), file=log_file_writer):
-            #     time.sleep(0.1)
-            #     print(f"Cross-validation fold {i} for trial {trial.number}...", file=log_file_writer)
-            # self.log_file.flush()
-            # # Sample loss
-            # # if trial.number >= 4:
-            # #     raise Exception("Stopping at trial 4")
+            # Sample loss
+            # if trial.number >= 4:
+            #     raise Exception("Stopping at trial 4")
             # import numpy as np
             # kfold_val_losses = np.random.rand(5)
+            # if trial.number ==2:
+            #     raise Exception("Stopping at trial 2")
 
             mean_loss = sum(kfold_val_losses) / len(kfold_val_losses)
             cv_std = (
                 sum((x - mean_loss) ** 2 for x in kfold_val_losses)
                 / len(kfold_val_losses)
             ) ** 0.5
-            trial.set_user_attr("cv_std", cv_std)
+            trial.set_user_attr("cv_std_loss", cv_std)
+            trial.set_user_attr("mean_loss", mean_loss)
+            mean_accuracy = sum(kfold_val_accuracies) / len(kfold_val_accuracies)
+            cv_std_accuracy = (
+                sum((x - mean_accuracy) ** 2 for x in kfold_val_accuracies)
+                / len(kfold_val_accuracies)
+            ) ** 0.5
+            trial.set_user_attr("cv_std_accuracy", cv_std_accuracy)
+            trial.set_user_attr("mean_accuracy", mean_accuracy)
             return mean_loss
 
         run_optuna_study(
@@ -260,14 +269,24 @@ class BaseRunner(ABC):
             "weight_decay": self.config.general_config.training.weight_decay,
         }
 
-    def _create_base_trainer(
-        self, callbacks: List[pl.Callback] = None, log_file_path: str = None
-    ):
+    def _create_base_trainer(self, callbacks: List[pl.Callback] = None):
         """Create PyTorch Lightning trainer."""
         if callbacks is None:
             callbacks = []
-        # Pass logger=False through to Trainer to disable default logger and avoid creating lightning_logs/
 
+        callbacks.append(
+            ModelCheckpoint(
+                dirpath=os.path.join(self.runs_folder, "checkpoints"),
+                filename="best_model",
+                monitor=self.config.general_config.training.checkpoint_monitor,
+                mode=(
+                    "max"
+                    if "f1" in self.config.general_config.training.checkpoint_monitor
+                    else "min"
+                ),
+                save_last=False,
+            )
+        )
         # Early stopping
         if self.config.general_config.training.early_stop > 0:
             callbacks.append(
@@ -278,8 +297,8 @@ class BaseRunner(ABC):
                 )
             )
         # Progress bar
-        if log_file_path is not None:
-            callbacks.append(FileTQDMProgressBar(file_path=log_file_path))
+        if self.log_file_path is not None:
+            callbacks.append(FileTQDMProgressBar(file_path=self.log_file_path))
         else:
             callbacks.append(RichProgressBar(leave=True))
 
@@ -289,8 +308,8 @@ class BaseRunner(ABC):
                 enable_checkpointing = True
                 break
 
-        if log_file_path is not None:
-            setup_pytorch_lightning_logging(log_file_path)
+        if self.log_file_path is not None:
+            setup_pytorch_lightning_logging(self.log_file_path)
 
         return pl.Trainer(
             accelerator="gpu" if torch.cuda.is_available() else "cpu",

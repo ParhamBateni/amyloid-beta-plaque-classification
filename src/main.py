@@ -32,7 +32,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n_trials",
         type=int,
-        default=3,
+        default=2,
         help="Number of trials to run for hyperparameter tuning",
     )
     # Parse arguments

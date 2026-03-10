@@ -134,14 +134,29 @@ def save_trials_to_csv(study: optuna.Study, log_dir: str) -> None:
     csv_path = os.path.join(log_dir, "trials_results.csv")
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        header = ["trial_number", "mean_cv_loss", "std_cv_loss"] + all_param_keys
+        header = [
+            "trial_number",
+            "mean_cv_loss",
+            "std_cv_loss",
+            "mean_cv_accuracy",
+            "std_cv_accuracy",
+        ] + all_param_keys
         writer.writerow(header)
 
         for t in study.trials:
             if not t.state.is_finished() or t.value is None:
                 continue
-            cv_std = t.user_attrs.get("cv_std", float("nan"))
-            row = [t.number, f"{t.value:.3f}", f"{cv_std:.3f}"]
+            cv_std = t.user_attrs.get("cv_std_loss", float("nan"))
+            mean_accuracy = t.user_attrs.get("mean_accuracy", float("nan"))
+            mean_loss = t.user_attrs.get("mean_loss", float("nan"))
+            cv_std_accuracy = t.user_attrs.get("cv_std_accuracy", float("nan"))
+            row = [
+                t.number,
+                f"{mean_loss:.3f}",
+                f"{cv_std:.3f}",
+                f"{mean_accuracy:.3f}",
+                f"{cv_std_accuracy:.3f}",
+            ]
             for k in all_param_keys:
                 val = t.params.get(k, "")
                 row.append(json.dumps(val) if isinstance(val, (list, dict)) else val)

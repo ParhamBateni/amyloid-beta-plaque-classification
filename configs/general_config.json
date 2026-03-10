@@ -36,7 +36,8 @@
         "use_thresholding": true,
         "threshold_min": 0,
         "threshold_max": 1,
-        "threshold_steps": 5
+        "threshold_steps": 5,
+        "hyperparemeter_tuning_val_size": 0.2
     },
     "system": {
         "debug_mode": true,

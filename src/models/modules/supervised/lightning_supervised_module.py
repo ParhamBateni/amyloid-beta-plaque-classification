@@ -50,7 +50,6 @@ class LightningSupervisedModule(pl.LightningModule):
         self.threshold_max = threshold_max
         self.threshold_steps = threshold_steps
         self.class_thresholds: Optional[np.ndarray] = None
-
         self.criterion = criterion
         self.optimizer = optimizer
         self.optimizer_kwargs = optimizer_kwargs
@@ -293,7 +292,7 @@ class LightningSupervisedModule(pl.LightningModule):
             )
             probs = torch.softmax(outputs, dim=1)
             if use_thresholds and self.class_thresholds is not None:
-                print("Using thresholds: ", self.class_thresholds)
+                # print("Using thresholds: ", self.class_thresholds)
                 preds_np = self._apply_thresholds(
                     probs.detach().cpu().numpy(), self.class_thresholds
                 )

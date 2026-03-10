@@ -12,46 +12,40 @@
         "output_size": 64,
         "pretrained": true,
         "freeze": false,
-        "unfreeze_after_n_epochs": 0,
-        "unfreeze_last_n_blocks": 0,
+        "unfreeze_after_n_epochs": 20,
+        "unfreeze_last_n_blocks": 1,
         "dropout_rate": 0.2,
         "hyperparameter_tuning": {
             "output_size": [64, 128],
             "dropout_rate": [0.1, 0.2],
-            "freeze": [true, false],
-            "unfreeze_last_n_blocks": [1],
-            "unfreeze_after_n_epochs": [50]
+            "freeze": [true, false]
         }
     },
     "resnet34": {
         "output_size": 64,
         "pretrained": true,
         "freeze": true,
-        "unfreeze_after_n_epochs": 60,
+        "unfreeze_after_n_epochs": 20,
         "unfreeze_last_n_blocks": 1,
         "dropout_rate": 0.2,
         "hyperparameter_tuning": {
             "output_size": [64, 128],
             "dropout_rate": [0.1, 0.2],
-            "freeze": [true, false],
-            "unfreeze_last_n_blocks": [1],
-            "unfreeze_after_n_epochs": [50]
+            "freeze": [true, false]
         }
     },
     "resnet50": {
         "output_size": 64,
         "pretrained": true,
         "freeze": true,
-        "unfreeze_after_n_epochs": 60,
+        "unfreeze_after_n_epochs": 20,
         "unfreeze_last_n_blocks": 1,
         "dropout_rate": 0.2,
 
         "hyperparameter_tuning": {
             "output_size": [64, 128],
             "dropout_rate": [0.1, 0.2],
-            "freeze": [true, false],
-            "unfreeze_last_n_blocks": [1],
-            "unfreeze_after_n_epochs": [50]
+            "freeze": [true, false]
         }
     },
     "h1_optimus": {
