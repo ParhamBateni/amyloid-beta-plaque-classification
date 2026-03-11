@@ -4,11 +4,7 @@ Logging and output utilities.
 
 import os
 import re
-import sys
-from typing import TextIO
 import logging
-from pytorch_lightning.loggers import Logger
-from pytorch_lightning.callbacks import RichProgressBar
 from pytorch_lightning.callbacks.progress.tqdm_progress import TQDMProgressBar
 from tqdm import tqdm
 
@@ -56,7 +52,7 @@ class FileTQDMProgressBar(TQDMProgressBar):
 
     def init_train_tqdm(self):
         return tqdm(
-            desc=self.train_description,
+            desc="Training",
             position=2 * self.process_position,
             disable=self.is_disabled,
             leave=True,

@@ -94,7 +94,7 @@ def run_optuna_study(
             n_trials=n_remaining,
             show_progress_bar=True,
             gc_after_trial=True,
-            n_jobs=n_jobs,
+            n_jobs=1, # It looks like there is only one GPU available in the machine, so we run the trials sequentially to avoid GPU memory time bottlenecks for a faster tuning process
         )
     else:
         print(

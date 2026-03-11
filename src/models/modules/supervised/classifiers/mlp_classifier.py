@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from .base_classifier import BaseClassifier
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 
 
 class MLPClassifier(BaseClassifier):
@@ -14,7 +14,7 @@ class MLPClassifier(BaseClassifier):
         input_size: int,
         output_size: int,
         dropout_rate: float = 0.2,
-        hidden_layers: List[int] | str = [256],
+        hidden_layers: Union[List[int], str] = [256],
         **kwargs,
     ):
         super().__init__(input_size, output_size, **kwargs)
