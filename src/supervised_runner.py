@@ -57,6 +57,8 @@ class SupervisedRunner(BaseRunner):
             val_losses,
             train_accuracies,
             val_accuracies,
+            train_f1s,
+            val_f1s,
             test_labels,
             test_preds,
         ) = self._run_single_experiment(
@@ -68,6 +70,8 @@ class SupervisedRunner(BaseRunner):
         save_loss_and_accuracy(
             train_losses,
             val_losses,
+            train_f1s,
+            val_f1s,
             train_accuracies,
             val_accuracies,
             folder_path=self.runs_folder,
@@ -75,6 +79,8 @@ class SupervisedRunner(BaseRunner):
         plot_loss_and_accuracy(
             train_losses,
             val_losses,
+            train_f1s,
+            val_f1s,
             train_accuracies,
             val_accuracies,
             folder_path=self.runs_folder,
@@ -95,7 +101,7 @@ class SupervisedRunner(BaseRunner):
             test_labels, test_preds, self.config.name_to_label.keys()
         )
         self.log_file_writer.write("Classification report:")
-        self.log_file_writer.write(classification_report_df)
+        self.log_file_writer.write(classification_report_df.to_string())
         save_classification_report(
             classification_report_df, folder_path=self.runs_folder
         )
@@ -107,6 +113,8 @@ class SupervisedRunner(BaseRunner):
             kfold_val_losses,
             kfold_train_accuracies,
             kfold_val_accuracies,
+            kfold_train_f1s,
+            kfold_val_f1s,
             kfold_test_labels,
             kfold_test_preds,
             best_trainer,
@@ -122,6 +130,8 @@ class SupervisedRunner(BaseRunner):
         save_loss_and_accuracy(
             kfold_train_losses,
             kfold_val_losses,
+            kfold_train_f1s,
+            kfold_val_f1s,
             kfold_train_accuracies,
             kfold_val_accuracies,
             folder_path=self.runs_folder,
@@ -160,7 +170,7 @@ class SupervisedRunner(BaseRunner):
             classification_reports_df
         )
         self.log_file_writer.write("Aggregated classification report:")
-        self.log_file_writer.write(aggregated_classification_reports_df)
+        self.log_file_writer.write(aggregated_classification_reports_df.to_string())
         save_classification_report(
             aggregated_classification_reports_df, folder_path=self.runs_folder
         )
@@ -290,23 +300,21 @@ class SupervisedRunner(BaseRunner):
         )
         trainer.fit(pl_module, datamodule=data_module)
 
+        checkpoint_path = os.path.join(
+            self.runs_folder, "checkpoints", "best_model.ckpt"
+        )
         if not skip_test:
             # Use best checkpoint for test (important when early stopping is used)
             results = trainer.test(
                 pl_module,
                 datamodule=data_module,
-                ckpt_path=os.path.join(
-                    self.runs_folder, "checkpoints", "best_model.ckpt"
-                ),
+                ckpt_path=checkpoint_path,
                 verbose=False,
             )
             self.log_file_writer.write(
                 f"Test results:\n{results[0] if results else {}}"
             )
 
-        checkpoint_path = os.path.join(
-            self.runs_folder, "checkpoints", "best_model.ckpt"
-        )
         # TODO: Propose a better way to handle this
         if (
             skip_test or self.config.general_config.system.debug_mode
@@ -319,6 +327,8 @@ class SupervisedRunner(BaseRunner):
             pl_module.val_losses,
             pl_module.train_accuracies,
             pl_module.val_accuracies,
+            pl_module.train_f1s,
+            pl_module.val_f1s,
             pl_module.test_labels if not skip_test else [],
             pl_module.test_preds if not skip_test else [],
         )
@@ -334,6 +344,8 @@ class SupervisedRunner(BaseRunner):
         kfold_val_losses = []
         kfold_train_accuracies = []
         kfold_val_accuracies = []
+        kfold_train_f1s = []
+        kfold_val_f1s = []
         kfold_test_labels = []
         kfold_test_preds = []
         best_val_loss = float("inf")
@@ -359,6 +371,8 @@ class SupervisedRunner(BaseRunner):
                 val_losses,
                 train_accuracies,
                 val_accuracies,
+                train_f1s,
+                val_f1s,
                 test_labels,
                 test_preds,
             ) = self._run_single_experiment(
@@ -378,6 +392,8 @@ class SupervisedRunner(BaseRunner):
             kfold_val_losses.append(val_losses[-1])
             kfold_train_accuracies.append(train_accuracies[-1])
             kfold_val_accuracies.append(val_accuracies[-1])
+            kfold_train_f1s.append(train_f1s[-1])
+            kfold_val_f1s.append(val_f1s[-1])
             kfold_test_labels.append(test_labels)
             kfold_test_preds.append(test_preds)
 
@@ -392,6 +408,8 @@ class SupervisedRunner(BaseRunner):
             kfold_val_losses,
             kfold_train_accuracies,
             kfold_val_accuracies,
+            kfold_train_f1s,
+            kfold_val_f1s,
             kfold_test_labels,
             kfold_test_preds,
             best_trainer,
@@ -408,6 +426,8 @@ class SupervisedRunner(BaseRunner):
         )
         kfold_train_losses = []
         kfold_val_losses = []
+        kfold_train_f1s = []
+        kfold_val_f1s = []
         kfold_train_accuracies = []
         kfold_val_accuracies = []
         for fold, (train_idx, val_idx) in tqdm(
@@ -424,6 +444,8 @@ class SupervisedRunner(BaseRunner):
                 val_losses,
                 train_accuracies,
                 val_accuracies,
+                train_f1s,
+                val_f1s,
                 _,
                 _,
             ) = self._run_single_experiment(
@@ -436,12 +458,16 @@ class SupervisedRunner(BaseRunner):
             kfold_val_losses.append(val_losses[-1])
             kfold_train_accuracies.append(train_accuracies[-1])
             kfold_val_accuracies.append(val_accuracies[-1])
+            kfold_train_f1s.append(train_f1s[-1])
+            kfold_val_f1s.append(val_f1s[-1])
 
         return (
             kfold_train_losses,
             kfold_val_losses,
             kfold_train_accuracies,
             kfold_val_accuracies,
+            kfold_train_f1s,
+            kfold_val_f1s,
         )
 
     def _type(self) -> str:

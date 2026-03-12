@@ -1,6 +1,7 @@
+from typing import Union
 from models.base_runner import BaseRunner
 from models.config import Config
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold
 import os
 import torch
 import pandas as pd
@@ -12,10 +13,8 @@ from models.modules.supervised.feature_extractors.base_feature_extractor import 
 from models.modules.supervised.classifiers.base_classifier import BaseClassifier
 import torch.nn as nn
 from torchvision import transforms as trf
-from models.data.plaque_dataset import PlaqueDatasetAugmented
-from utils.logging_utils import StdoutRedirector
-
-from sklearn.model_selection import StratifiedKFold
+from models.data.plaque_dataset import PlaqueDatasetAugmented, PlaqueDataset
+from pytorch_lightning.utilities.model_summary import summarize
 from tqdm import tqdm
 from utils import (
     generate_classification_report_df,
@@ -25,10 +24,7 @@ from utils import (
     plot_loss_and_accuracy,
     plot_confusion_matrix,
 )
-from pytorch_lightning.loggers import CSVLogger
-from pytorch_lightning.callbacks import ModelCheckpoint
 from sklearn.metrics import confusion_matrix as sklearn_confusion_matrix
-from models.data.plaque_dataset import PlaqueDataset
 from models.modules.semi_supervised.base_lightning_semi_supervised_module import (
     BaseLightningSemiSupervisedModule,
 )
@@ -57,54 +53,32 @@ class SemiSupervisedRunner(BaseRunner):
             random_state=self.config.general_config.system.random_seed,
         )
 
-        # Create trainer
-        callbacks = []
-        if not self.config.general_config.system.debug_mode:
-            callbacks.append(
-                ModelCheckpoint(
-                    dirpath=os.path.join(self.runs_folder, "checkpoints"),
-                    filename="best_model",
-                    monitor=self.config.general_config.training.checkpoint_monitor,
-                    mode=(
-                        "max"
-                        if "f1"
-                        in self.config.general_config.training.checkpoint_monitor
-                        else "min"
-                    ),
-                    save_last=False,
-                )
-            )
-        trainer = self._create_base_trainer(
-            callbacks=callbacks,
-            logger=CSVLogger(save_dir=self.runs_folder),
-        )
+        # Create trainer (BaseRunner handles checkpointing, early stopping, logging)
+        trainer = self._create_base_trainer()
 
-        # Redirect all output to log file
-        full_output_log = os.path.join(
-            self.runs_folder,
-            f"full_training_output.log",
+        (
+            train_losses,
+            val_losses,
+            train_accuracies,
+            val_accuracies,
+            train_f1s,
+            val_f1s,
+            test_labels,
+            test_preds,
+        ) = self._run_single_experiment(
+            train_labeled_data_df=train_labeled_data_df,
+            val_labeled_data_df=val_labeled_data_df,
+            test_labeled_data_df=test_labeled_data_df,
+            unlabeled_data_df=self.unlabeled_data_df,
+            trainer=trainer,
         )
-
-        with StdoutRedirector(full_output_log):
-            (
-                train_losses,
-                val_losses,
-                train_accuracies,
-                val_accuracies,
-                test_labels,
-                test_preds,
-            ) = self._run_single_experiment(
-                train_labeled_data_df=train_labeled_data_df,
-                val_labeled_data_df=val_labeled_data_df,
-                test_labeled_data_df=test_labeled_data_df,
-                unlabeled_data_df=self.unlabeled_data_df,
-                trainer=trainer,
-            )
 
         # Save results
         save_loss_and_accuracy(
             train_losses,
             val_losses,
+            train_f1s,
+            val_f1s,
             train_accuracies,
             val_accuracies,
             folder_path=self.runs_folder,
@@ -112,6 +86,17 @@ class SemiSupervisedRunner(BaseRunner):
         plot_loss_and_accuracy(
             train_losses,
             val_losses,
+            train_f1s,
+            val_f1s,
+            train_accuracies,
+            val_accuracies,
+            folder_path=self.runs_folder,
+        )
+        plot_loss_and_accuracy(
+            train_losses,
+            val_losses,
+            train_f1s,
+            val_f1s,
             train_accuracies,
             val_accuracies,
             folder_path=self.runs_folder,
@@ -131,26 +116,23 @@ class SemiSupervisedRunner(BaseRunner):
         classification_report_df = generate_classification_report_df(
             test_labels, test_preds, self.config.name_to_label.keys()
         )
-        print("Classification report:")
-        print(classification_report_df)
+        self.log_file_writer.write("Classification report:")
+        self.log_file_writer.write(classification_report_df.to_string())
         save_classification_report(
             classification_report_df, folder_path=self.runs_folder
         )
 
     def cross_validate(self):
         """Run cross-validation for semi-supervised learning."""
-        with StdoutRedirector(
-            os.path.join(self.runs_folder, "cross_validate_output.log")
-        ):
-            (
-                kfold_train_losses,
-                kfold_val_losses,
-                kfold_train_accuracies,
-                kfold_val_accuracies,
-                kfold_test_labels,
-                kfold_test_preds,
-                best_trainer,
-            ) = self._cross_validate()
+        (
+            kfold_train_losses,
+            kfold_val_losses,
+            kfold_train_accuracies,
+            kfold_val_accuracies,
+            kfold_test_labels,
+            kfold_test_preds,
+            best_trainer,
+        ) = self._cross_validate()
 
         if (
             best_trainer is not None
@@ -204,8 +186,8 @@ class SemiSupervisedRunner(BaseRunner):
         aggregated_classification_reports_df = aggregate_reports(
             classification_reports_df
         )
-        print("Aggregated classification report:")
-        print(aggregated_classification_reports_df)
+        self.log_file_writer.write("Aggregated classification report:")
+        self.log_file_writer.write(aggregated_classification_reports_df.to_string())
         save_classification_report(
             aggregated_classification_reports_df, folder_path=self.runs_folder
         )
@@ -227,7 +209,7 @@ class SemiSupervisedRunner(BaseRunner):
         self,
         train_labeled_data_df: pd.DataFrame,
         val_labeled_data_df: pd.DataFrame,
-        test_labeled_data_df: pd.DataFrame,
+        test_labeled_data_df: Union[pd.DataFrame, None],
         unlabeled_data_df: pd.DataFrame,
         trainer: pl.Trainer,
     ):
@@ -245,6 +227,18 @@ class SemiSupervisedRunner(BaseRunner):
             unlabeled_data_df,
         )
 
+        skip_test = test_labeled_data_df is None
+        if self.config.general_config.system.debug_mode:
+            self.log_file_writer.write("Statistics of the dataloaders:")
+            self.log_file_writer.write(
+                f"Train labeled dataloader size: {len(train_labeled_dataloader)}"
+            )
+            self.log_file_writer.write(
+                f"Val labeled dataloader size: {len(val_labeled_dataloader)}"
+            )
+            self.log_file_writer.write(
+                f"Test labeled dataloader size: {len(test_labeled_dataloader) if not skip_test else 0}"
+            )
         # Create model components
         feature_extractor = self._create_feature_extractor_from_config()
         classifier = self._create_classifier_from_config(
@@ -290,6 +284,10 @@ class SemiSupervisedRunner(BaseRunner):
             threshold_steps=self.config.general_config.training.threshold_steps,
             **kwargs,
         )
+        # Log the model architecture to the log file
+        self.log_file_writer.write("Model architecture:")
+        self.log_file_writer.write(str(summarize(pl_module)))
+        self.log_file_writer.flush()
 
         # Create data module
         data_module = SemiSupervisedPlaqueLightningDataModule(
@@ -299,16 +297,36 @@ class SemiSupervisedRunner(BaseRunner):
             unlabeled_plaque_dataloader=unlabeled_dataloader,
         )
 
-        # Train and test
-        trainer.fit(pl_module, datamodule=data_module)
-        # Use best checkpoint for test (important when early stopping is used)
-        trainer.test(pl_module, datamodule=data_module, ckpt_path="best")
+        checkpoint_path = os.path.join(
+            self.runs_folder, "checkpoints", "best_model.ckpt"
+        )
+        if not skip_test:
+            results = trainer.test(
+                pl_module,
+                datamodule=data_module,
+                ckpt_path=checkpoint_path,
+                verbose=False,
+            )
+            self.log_file_writer.write(
+                f"Test results:\n{results[0] if results else {}}"
+            )
+        else:
+            results = None
+            self.log_file_writer.write("Test results: None")
 
+        # TODO: Propose a better way to handle this
+        if (
+            skip_test or self.config.general_config.system.debug_mode
+        ) and os.path.exists(checkpoint_path):
+            os.remove(checkpoint_path)
+            os.removedirs(os.path.join(self.runs_folder, "checkpoints"))
         return (
             pl_module.train_losses,
             pl_module.val_losses,
             pl_module.train_accuracies,
             pl_module.val_accuracies,
+            pl_module.train_f1s,
+            pl_module.val_f1s,
             pl_module.test_labels,
             pl_module.test_preds,
         )
@@ -325,6 +343,8 @@ class SemiSupervisedRunner(BaseRunner):
         kfold_val_losses = []
         kfold_train_accuracies = []
         kfold_val_accuracies = []
+        kfold_train_f1s = []
+        kfold_val_f1s = []
         kfold_test_labels = []
         kfold_test_preds = []
         best_val_loss = float("inf")
@@ -334,6 +354,7 @@ class SemiSupervisedRunner(BaseRunner):
             enumerate(kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
             total=num_folds,
             desc="Cross-validating",
+            file=self.log_file_writer,
         ):
             train_labeled_data_df = self.labeled_data_df.iloc[train_idx]
             test_labeled_data_df = self.labeled_data_df.iloc[test_idx]
@@ -351,6 +372,8 @@ class SemiSupervisedRunner(BaseRunner):
                 val_losses,
                 train_accuracies,
                 val_accuracies,
+                train_f1s,
+                val_f1s,
                 test_labels,
                 test_preds,
             ) = self._run_single_experiment(
@@ -370,6 +393,8 @@ class SemiSupervisedRunner(BaseRunner):
             kfold_val_losses.append(val_losses[-1])
             kfold_train_accuracies.append(train_accuracies[-1])
             kfold_val_accuracies.append(val_accuracies[-1])
+            kfold_train_f1s.append(train_f1s[-1])
+            kfold_val_f1s.append(val_f1s[-1])
             kfold_test_labels.append(test_labels)
             kfold_test_preds.append(test_preds)
 
@@ -378,9 +403,77 @@ class SemiSupervisedRunner(BaseRunner):
             kfold_val_losses,
             kfold_train_accuracies,
             kfold_val_accuracies,
+            kfold_train_f1s,
+            kfold_val_f1s,
             kfold_test_labels,
             kfold_test_preds,
             best_trainer,
+        )
+
+    def _hyperparameter_tuning(self):
+        """
+        K-fold loop for hyperparameter tuning on labeled data only.
+
+        Mirrors the supervised runner: we split the full labeled set into
+        k folds (derived from training.hyperparemeter_tuning_val_size),
+        train on k-1 folds and validate on the remaining one. We ignore
+        the test outputs and use only train/val metrics for tuning.
+        """
+        cfg_train = self.config.general_config.training
+        num_folds = round(1 / cfg_train.hyperparemeter_tuning_val_size)
+        kfold = StratifiedKFold(
+            n_splits=num_folds,
+            shuffle=True,
+            random_state=self.config.general_config.system.random_seed,
+        )
+        kfold_train_losses = []
+        kfold_val_losses = []
+        kfold_train_accuracies = []
+        kfold_val_accuracies = []
+        kfold_train_f1s = []
+        kfold_val_f1s = []
+
+        for fold, (train_idx, val_idx) in tqdm(
+            enumerate(kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
+            total=num_folds,
+            desc="Hyperparameter tuning",
+            file=self.log_file_writer,
+        ):
+            train_labeled_data_df = self.labeled_data_df.iloc[train_idx]
+            val_labeled_data_df = self.labeled_data_df.iloc[val_idx]
+
+            trainer = self._create_base_trainer()
+            (
+                train_losses,
+                val_losses,
+                train_accuracies,
+                val_accuracies,
+                train_f1s,
+                val_f1s,
+                _,
+                _,
+            ) = self._run_single_experiment(
+                train_labeled_data_df=train_labeled_data_df,
+                val_labeled_data_df=val_labeled_data_df,
+                test_labeled_data_df=None,
+                unlabeled_data_df=self.unlabeled_data_df,
+                trainer=trainer,
+            )
+
+            kfold_train_losses.append(train_losses[-1])
+            kfold_val_losses.append(val_losses[-1])
+            kfold_train_accuracies.append(train_accuracies[-1])
+            kfold_val_accuracies.append(val_accuracies[-1])
+            kfold_train_f1s.append(train_f1s[-1])
+            kfold_val_f1s.append(val_f1s[-1])
+
+        return (
+            kfold_train_losses,
+            kfold_val_losses,
+            kfold_train_accuracies,
+            kfold_val_accuracies,
+            kfold_train_f1s,
+            kfold_val_f1s,
         )
 
     def _type(self) -> str:

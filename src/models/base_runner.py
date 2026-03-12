@@ -189,8 +189,24 @@ class BaseRunner(ABC):
                 kfold_val_losses,
                 _,
                 kfold_val_accuracies,
+                _,
+                kfold_val_f1s,
             ) = copy_runner._hyperparameter_tuning()
 
+            mean_accuracy = sum(kfold_val_accuracies) / len(kfold_val_accuracies)
+            cv_std_accuracy = (
+                sum((x - mean_accuracy) ** 2 for x in kfold_val_accuracies)
+                / len(kfold_val_accuracies)
+            ) ** 0.5
+
+            mean_f1 = sum(kfold_val_f1s) / len(kfold_val_f1s)
+            cv_std_f1 = (
+                sum((x - mean_f1) ** 2 for x in kfold_val_f1s) / len(kfold_val_f1s)
+            ) ** 0.5
+            trial.set_user_attr("cv_std_accuracy", cv_std_accuracy)
+            trial.set_user_attr("mean_accuracy", mean_accuracy)
+            trial.set_user_attr("cv_std_f1", cv_std_f1)
+            trial.set_user_attr("mean_f1", mean_f1)
             # Sample loss
             # if trial.number >= 4:
             #     raise Exception("Stopping at trial 4")
@@ -206,14 +222,7 @@ class BaseRunner(ABC):
             ) ** 0.5
             trial.set_user_attr("cv_std_loss", cv_std)
             trial.set_user_attr("mean_loss", mean_loss)
-            mean_accuracy = sum(kfold_val_accuracies) / len(kfold_val_accuracies)
-            cv_std_accuracy = (
-                sum((x - mean_accuracy) ** 2 for x in kfold_val_accuracies)
-                / len(kfold_val_accuracies)
-            ) ** 0.5
-            trial.set_user_attr("cv_std_accuracy", cv_std_accuracy)
-            trial.set_user_attr("mean_accuracy", mean_accuracy)
-            return mean_loss
+            return mean_f1
 
         run_optuna_study(
             objective_fn=objective,

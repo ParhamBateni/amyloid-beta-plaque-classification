@@ -5,8 +5,8 @@ import os
 import torch
 import pandas as pd
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import RichProgressBar, ModelCheckpoint
-from pytorch_lightning.loggers import CSVLogger
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.utilities.model_summary import summarize
 from models.data.lightning_data_module import (
     SelfSupervisedPlaqueLightningDataModule,
     SupervisedPlaqueLightningDataModule,
@@ -23,7 +23,7 @@ from models.modules.self_supervised.base_lightning_self_supervised_module import
 )
 from torchvision import transforms as trf
 from models.data.plaque_dataset import PlaqueDataset, PlaqueDatasetAugmented
-from utils.logging_utils import StdoutRedirector
+from utils.logging_utils import FileTQDMProgressBar, setup_pytorch_lightning_logging
 
 from sklearn.metrics import confusion_matrix as sklearn_confusion_matrix
 from tqdm import tqdm
@@ -75,19 +75,22 @@ class SelfSupervisedRunner(BaseRunner):
         )
 
         # Create pretraining trainer based on the config
-        pretraining_callbacks = [RichProgressBar(leave=True)]
+        pretraining_callbacks = []
         enable_checkpointing = False
         if not self.config.general_config.system.debug_mode:
             enable_checkpointing = True
             pretraining_callbacks.append(
                 ModelCheckpoint(
-                    dirpath="checkpoints",
+                    dirpath=os.path.join(self.runs_folder, "pretraining_checkpoints"),
                     filename="pretrained_feature_extractor_best_model",
                     monitor="val_loss",
                     mode="min",
                     save_last=False,
                 )
             )
+        # Log pretraining progress into the main log file as well
+        pretraining_callbacks.append(FileTQDMProgressBar(file_path=self.log_file_path))
+        setup_pytorch_lightning_logging(self.log_file_path)
         pretraining_trainer = pl.Trainer(
             accelerator="gpu" if torch.cuda.is_available() else "cpu",
             devices=1,
@@ -97,10 +100,10 @@ class SelfSupervisedRunner(BaseRunner):
             callbacks=pretraining_callbacks,
             log_every_n_steps=1,
             num_sanity_val_steps=0,
-            logger=CSVLogger(save_dir=self.runs_folder, name="pretraining_logs"),
+            logger=False,
         )
 
-        finetuning_callbacks = [RichProgressBar(leave=True)]
+        finetuning_callbacks = []
         if not self.config.general_config.system.debug_mode:
             finetuning_callbacks.append(
                 ModelCheckpoint(
@@ -118,35 +121,32 @@ class SelfSupervisedRunner(BaseRunner):
             )
         finetuning_trainer = self._create_base_trainer(
             callbacks=finetuning_callbacks,
-            logger=CSVLogger(save_dir=self.runs_folder, name="finetuning_logs"),
         )
 
-        full_output_log = os.path.join(
-            self.runs_folder,
-            "full_training_output.log",
+        (
+            train_losses,
+            val_losses,
+            train_accuracies,
+            val_accuracies,
+            train_f1s,
+            val_f1s,
+            test_labels,
+            test_preds,
+        ) = self._run_single_experiment(
+            train_labeled_data_df=train_labeled_data_df,
+            val_labeled_data_df=val_labeled_data_df,
+            test_labeled_data_df=test_labeled_data_df,
+            unlabeled_data_df=self.unlabeled_data_df,
+            pretraining_trainer=pretraining_trainer,
+            finetuning_trainer=finetuning_trainer,
         )
-
-        with StdoutRedirector(full_output_log):
-            (
-                train_losses,
-                val_losses,
-                train_accuracies,
-                val_accuracies,
-                test_labels,
-                test_preds,
-            ) = self._run_single_experiment(
-                train_labeled_data_df=train_labeled_data_df,
-                val_labeled_data_df=val_labeled_data_df,
-                test_labeled_data_df=test_labeled_data_df,
-                unlabeled_data_df=self.unlabeled_data_df,
-                pretraining_trainer=pretraining_trainer,
-                finetuning_trainer=finetuning_trainer,
-            )
 
         # Save results
         save_loss_and_accuracy(
             train_losses,
             val_losses,
+            train_f1s,
+            val_f1s,
             train_accuracies,
             val_accuracies,
             folder_path=self.runs_folder,
@@ -154,6 +154,8 @@ class SelfSupervisedRunner(BaseRunner):
         plot_loss_and_accuracy(
             train_losses,
             val_losses,
+            train_f1s,
+            val_f1s,
             train_accuracies,
             val_accuracies,
             folder_path=self.runs_folder,
@@ -172,27 +174,25 @@ class SelfSupervisedRunner(BaseRunner):
         classification_report_df = generate_classification_report_df(
             test_labels, test_preds, self.config.name_to_label.keys()
         )
-        print("Classification report:")
-        print(classification_report_df)
+        self.log_file_writer.write("Classification report:")
+        self.log_file_writer.write(classification_report_df.to_string())
         save_classification_report(
             classification_report_df, folder_path=self.runs_folder
         )
 
     def cross_validate(self):
         """Run cross-validation for self-supervised backbone pretraining + finetuning."""
-        with StdoutRedirector(
-            os.path.join(self.runs_folder, "cross_validate_output.log")
-        ):
-            (
-                kfold_train_losses,
-                kfold_val_losses,
-                kfold_train_accuracies,
-                kfold_val_accuracies,
-                kfold_test_labels,
-                kfold_test_preds,
-                best_trainer,
-            ) = self._cross_validate()
-
+        (
+            kfold_train_losses,
+            kfold_val_losses,
+            kfold_train_accuracies,
+            kfold_val_accuracies,
+            kfold_train_f1s,
+            kfold_val_f1s,
+            kfold_test_labels,
+            kfold_test_preds,
+            best_trainer,
+        ) = self._cross_validate()
         if (
             best_trainer is not None
             and not self.config.general_config.system.debug_mode
@@ -205,6 +205,8 @@ class SelfSupervisedRunner(BaseRunner):
         save_loss_and_accuracy(
             kfold_train_losses,
             kfold_val_losses,
+            kfold_train_f1s,
+            kfold_val_f1s,
             kfold_train_accuracies,
             kfold_val_accuracies,
             folder_path=self.runs_folder,
@@ -245,8 +247,8 @@ class SelfSupervisedRunner(BaseRunner):
         aggregated_classification_reports_df = aggregate_reports(
             classification_reports_df
         )
-        print("Aggregated classification report:")
-        print(aggregated_classification_reports_df)
+        self.log_file_writer.write("Aggregated classification report:")
+        self.log_file_writer.write(aggregated_classification_reports_df.to_string())
         save_classification_report(
             aggregated_classification_reports_df, folder_path=self.runs_folder
         )
@@ -293,20 +295,26 @@ class SelfSupervisedRunner(BaseRunner):
         kfold_val_losses = []
         kfold_train_accuracies = []
         kfold_val_accuracies = []
+        kfold_train_f1s = []
+        kfold_val_f1s = []
         kfold_test_labels = []
         kfold_test_preds = []
         best_val_loss = float("inf")
         best_trainer = None
 
+        # Log pretraining progress into the main log file for CV as well
+        pretraining_callbacks = [FileTQDMProgressBar(file_path=self.log_file_path)]
+        setup_pytorch_lightning_logging(self.log_file_path)
         pretraining_trainer = pl.Trainer(
             accelerator="gpu" if torch.cuda.is_available() else "cpu",
             devices=1,
             max_epochs=self.config.self_supervised.self_supervised_config.pretraining.num_epochs,
             enable_checkpointing=False,
             enable_progress_bar=True,
-            callbacks=[RichProgressBar(leave=True)],
+            callbacks=pretraining_callbacks,
             log_every_n_steps=1,
             num_sanity_val_steps=0,
+            logger=False,
         )
         pretrained_feature_extractor = self._run_pretraining(
             unlabeled_data_df=self.unlabeled_data_df,
@@ -317,6 +325,7 @@ class SelfSupervisedRunner(BaseRunner):
             enumerate(kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
             total=num_folds,
             desc="Cross-validating",
+            file=self.log_file_writer,
         ):
             train_labeled_data_df = self.labeled_data_df.iloc[train_idx]
             test_labeled_data_df = self.labeled_data_df.iloc[test_idx]
@@ -350,6 +359,8 @@ class SelfSupervisedRunner(BaseRunner):
                 val_losses,
                 train_accuracies,
                 val_accuracies,
+                train_f1s,
+                val_f1s,
                 test_labels,
                 test_preds,
             ) = self._run_supervised_finetuning(
@@ -369,6 +380,8 @@ class SelfSupervisedRunner(BaseRunner):
             kfold_val_losses.append(val_losses[-1])
             kfold_train_accuracies.append(train_accuracies[-1])
             kfold_val_accuracies.append(val_accuracies[-1])
+            kfold_train_f1s.append(train_f1s[-1])
+            kfold_val_f1s.append(val_f1s[-1])
             kfold_test_labels.append(test_labels)
             kfold_test_preds.append(test_preds)
 
@@ -384,6 +397,8 @@ class SelfSupervisedRunner(BaseRunner):
             kfold_val_losses,
             kfold_train_accuracies,
             kfold_val_accuracies,
+            kfold_train_f1s,
+            kfold_val_f1s,
             kfold_test_labels,
             kfold_test_preds,
             best_trainer,
@@ -698,22 +713,32 @@ class SelfSupervisedRunner(BaseRunner):
             threshold_max=self.config.general_config.training.threshold_max,
             threshold_steps=self.config.general_config.training.threshold_steps,
         )
+        # Log the model architecture for the finetuning stage
+        self.log_file_writer.write("Finetuning model architecture:")
+        self.log_file_writer.write(str(summarize(pl_module)))
+        self.log_file_writer.flush()
         data_module = SupervisedPlaqueLightningDataModule(
             train_labeled_plaque_dataloader=train_labeled_dataloader,
             val_labeled_plaque_dataloader=val_labeled_dataloader,
             test_labeled_plaque_dataloader=test_labeled_dataloader,
         )
         finetuning_trainer.fit(pl_module, datamodule=data_module)
-        finetuning_trainer.test(
+        results = finetuning_trainer.test(
             pl_module,
             datamodule=data_module,
             ckpt_path=os.path.join(self.runs_folder, "checkpoints", "best_model.ckpt"),
+            verbose=False,
+        )
+        self.log_file_writer.write(
+            f"Self-supervised finetuning test results:\n{results[0] if results else {}}"
         )
         return (
             pl_module.train_losses,
             pl_module.val_losses,
             pl_module.train_accuracies,
             pl_module.val_accuracies,
+            getattr(pl_module, "train_f1s", pl_module.train_accuracies),
+            getattr(pl_module, "val_f1s", pl_module.val_accuracies),
             pl_module.test_labels,
             pl_module.test_preds,
         )

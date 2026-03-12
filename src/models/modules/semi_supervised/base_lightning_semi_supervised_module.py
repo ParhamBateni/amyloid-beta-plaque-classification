@@ -74,6 +74,9 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         self.val_losses = []
         self.train_accuracies = []
         self.val_accuracies = []
+        # Explicit F1 histories to mirror supervised module interface
+        self.train_f1s = []
+        self.val_f1s = []
 
         # Batch tracking
         self._train_loss_sum = 0.0
@@ -320,12 +323,16 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
                 )
                 / len(self._train_labels)
             )
-            self.train_losses.append(round(float(avg_loss), 3))
-            self.train_accuracies.append(round(float(acc), 3))
+            train_f1 = f1_score(self._train_labels, self._train_preds, average="macro")
 
+            # Store F1 in the history so downstream reporting uses F1 as the main curve
+            self.train_losses.append(round(float(avg_loss), 3))
+            self.train_accuracies.append(round(float(train_f1), 3))
+            self.train_f1s.append(round(float(train_f1), 3))
+
+            # Log both accuracy and F1
             self.log("train_loss", avg_loss, prog_bar=True)
             self.log("train_accuracy", acc / 100.0, prog_bar=True)
-            train_f1 = f1_score(self._train_labels, self._train_preds, average="macro")
             self.log("train_f1", train_f1, prog_bar=True)
 
         # Reset train trackers
@@ -351,7 +358,9 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
                 val_acc_thresh = 100.0 * (preds_thresh == labels_val).mean()
 
                 self.val_losses.append(round(float(avg_val_loss), 3))
-                self.val_accuracies.append(round(float(val_acc_thresh), 3))
+                # Store thresholded F1 in history slot
+                self.val_accuracies.append(round(float(val_f1_thresh), 3))
+                self.val_f1s.append(round(float(val_f1_thresh), 3))
 
                 self.log("val_loss", avg_val_loss, prog_bar=True)
                 self.log("val_accuracy", val_acc_thresh / 100.0, prog_bar=True)
@@ -369,12 +378,15 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
                     )
                     / len(self._val_labels)
                 )
+                val_f1 = f1_score(self._val_labels, self._val_preds, average="macro")
+
                 self.val_losses.append(round(float(avg_val_loss), 3))
-                self.val_accuracies.append(round(float(val_acc), 3))
+                # Store F1 in history slot
+                self.val_accuracies.append(round(float(val_f1), 3))
+                self.val_f1s.append(round(float(val_f1), 3))
 
                 self.log("val_loss", avg_val_loss, prog_bar=True)
                 self.log("val_accuracy", val_acc / 100.0, prog_bar=True)
-                val_f1 = f1_score(self._val_labels, self._val_preds, average="macro")
                 self.log("val_f1", val_f1, prog_bar=True)
 
         # Reset val trackers

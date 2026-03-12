@@ -20,7 +20,7 @@ __all__ = [
     "print_log",
     "save_loss_and_accuracy",
     "plot_loss_and_accuracy",
-    "AnsiStrippingFileWriter",
+    "AnsiStrippingFileRedirector",
     "set_random_seeds",
     "plot_confusion_matrix",
     "aggregate_reports",

@@ -58,6 +58,9 @@ class LightningSupervisedModule(pl.LightningModule):
         self.val_losses = []
         self.train_accuracies = []
         self.val_accuracies = []
+        # Explicit F1 histories (used by runners and reports)
+        self.train_f1s = []
+        self.val_f1s = []
 
         self._train_loss_sum = 0.0
         self._train_labels = []
@@ -127,12 +130,13 @@ class LightningSupervisedModule(pl.LightningModule):
                 )
                 / len(self._train_labels)
             )
+            train_f1 = f1_score(self._train_labels, self._train_preds, average="macro")
             self.train_losses.append(round(float(avg_loss), 3))
             self.train_accuracies.append(round(float(acc), 3))
+            self.train_f1s.append(round(float(train_f1), 3))
             # Log epoch-level train metrics once per epoch
             self.log("train_loss", avg_loss, prog_bar=True)
             self.log("train_accuracy", acc / 100.0, prog_bar=True)
-            train_f1 = f1_score(self._train_labels, self._train_preds, average="macro")
             self.log("train_f1", train_f1, prog_bar=True)
         # Reset train trackers only; val trackers reset in on_validation_epoch_end
         self._train_loss_sum = 0.0
@@ -156,9 +160,10 @@ class LightningSupervisedModule(pl.LightningModule):
                 preds_thresh = self._apply_thresholds(probs_val, self.class_thresholds)
                 val_acc_thresh = 100.0 * (preds_thresh == labels_val).mean()
 
-                # store thresholded accuracy as main curve
+                # store thresholded F1 as the main curve
                 self.val_losses.append(round(float(avg_val_loss), 3))
                 self.val_accuracies.append(round(float(val_acc_thresh), 3))
+                self.val_f1s.append(round(float(val_f1_thresh), 3))
 
                 self.log("val_loss", avg_val_loss, prog_bar=True)
                 self.log("val_accuracy", val_acc_thresh / 100.0, prog_bar=True)
@@ -178,12 +183,13 @@ class LightningSupervisedModule(pl.LightningModule):
                     )
                     / len(self._val_labels)
                 )
+                val_f1 = f1_score(self._val_labels, self._val_preds, average="macro")
                 self.val_losses.append(round(float(avg_val_loss), 3))
                 self.val_accuracies.append(round(float(val_acc), 3))
+                self.val_f1s.append(round(float(val_f1), 3))
 
                 self.log("val_loss", avg_val_loss, prog_bar=True)
                 self.log("val_accuracy", val_acc / 100.0, prog_bar=True)
-                val_f1 = f1_score(self._val_labels, self._val_preds, average="macro")
                 self.log("val_f1", val_f1, prog_bar=True)
         # Reset val trackers
         self._val_loss_sum = 0.0
