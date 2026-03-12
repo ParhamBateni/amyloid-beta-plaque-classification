@@ -2,7 +2,7 @@
     "feature_extractor_name": "simple_cnn",
     "classifier_name": "linear",
     "hyperparameter_tuning": {
-        "feature_extractor_name": ["resnet18", "resnet50"],
+        "feature_extractor_name": ["simple_cnn", "resnet18", "resnet50"],
         "classifier_name": ["linear"]
     }
 }
