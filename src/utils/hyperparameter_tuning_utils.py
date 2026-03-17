@@ -66,7 +66,7 @@ def run_optuna_study(
 
     # TODO: You might want to consider using a pruner to avoid running trials that are already known to be bad
     study = optuna.create_study(
-        direction="minimize",
+        direction="maximize", # We maximize the F1 score
         study_name=study_name,
         storage=storage,
         load_if_exists=True,
@@ -136,6 +136,7 @@ def save_trials_to_csv(study: optuna.Study, log_dir: str) -> None:
         writer = csv.writer(f)
         header = [
             "trial_number",
+            "repeated_trial",
             "mean_f1",
             "std_f1",
             "mean_accuracy",
@@ -148,6 +149,7 @@ def save_trials_to_csv(study: optuna.Study, log_dir: str) -> None:
         for t in study.trials:
             if not t.state.is_finished() or t.value is None:
                 continue
+            repeated_trial = t.user_attrs.get("repeated_trial", False)
             mean_f1 = t.user_attrs.get("mean_f1", float("nan"))
             cv_std_f1 = t.user_attrs.get("cv_std_f1", float("nan"))
             mean_loss = t.user_attrs.get("mean_loss", float("nan"))
@@ -156,6 +158,7 @@ def save_trials_to_csv(study: optuna.Study, log_dir: str) -> None:
             cv_std_accuracy = t.user_attrs.get("cv_std_accuracy", float("nan"))
             row = [
                 t.number,
+                repeated_trial,
                 f"{mean_f1:.3f}",
                 f"{cv_std_f1:.3f}",
                 f"{mean_accuracy:.3f}",

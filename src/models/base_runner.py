@@ -168,9 +168,13 @@ class BaseRunner(ABC):
                     and dict(t.params) == trial_params
                 ):
                     # Copy cv_std for CSV/tracking
-                    trial.set_user_attr(
-                        "cv_std", t.user_attrs.get("cv_std", float("nan"))
-                    )
+                    trial.set_user_attr("mean_f1", t.user_attrs.get("mean_f1", float("nan")))
+                    trial.set_user_attr("cv_std_f1", t.user_attrs.get("cv_std_f1", float("nan")))
+                    trial.set_user_attr("mean_accuracy", t.user_attrs.get("mean_accuracy", float("nan")))
+                    trial.set_user_attr("cv_std_accuracy", t.user_attrs.get("cv_std_accuracy", float("nan")))
+                    trial.set_user_attr("mean_loss", t.user_attrs.get("mean_loss", float("nan")))
+                    trial.set_user_attr("cv_std_loss", t.user_attrs.get("cv_std_loss", float("nan")))
+                    trial.set_user_attr("repeated_trial", True)
                     with open(os.path.join(trial_folder, "params.json"), "w") as f:
                         json.dump(trial.params, f, indent=2)
                     with open(
@@ -203,6 +207,7 @@ class BaseRunner(ABC):
             cv_std_f1 = (
                 sum((x - mean_f1) ** 2 for x in kfold_val_f1s) / len(kfold_val_f1s)
             ) ** 0.5
+            trial.set_user_attr("repeated_trial", False)
             trial.set_user_attr("cv_std_accuracy", cv_std_accuracy)
             trial.set_user_attr("mean_accuracy", mean_accuracy)
             trial.set_user_attr("cv_std_f1", cv_std_f1)
