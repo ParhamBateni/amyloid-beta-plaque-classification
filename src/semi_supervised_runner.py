@@ -7,10 +7,6 @@ import torch
 import pandas as pd
 import pytorch_lightning as pl
 from models.data.lightning_data_module import SemiSupervisedPlaqueLightningDataModule
-from models.modules.supervised.feature_extractors.base_feature_extractor import (
-    BaseFeatureExtractor,
-)
-from models.modules.supervised.classifiers.base_classifier import BaseClassifier
 import torch.nn as nn
 from torchvision import transforms as trf
 from models.data.plaque_dataset import PlaqueDatasetAugmented, PlaqueDataset
@@ -191,13 +187,6 @@ class SemiSupervisedRunner(BaseRunner):
         save_classification_report(
             aggregated_classification_reports_df, folder_path=self.runs_folder
         )
-
-    def _get_tuning_config_section(self):
-        return ("semi_supervised", "semi_supervised_config")
-
-    def _get_feature_extractor_and_classifier_names(self):
-        ssc = self.config.semi_supervised.semi_supervised_config
-        return ssc.feature_extractor_name, ssc.classifier_name
 
     # TODO: This function is not used yet, so it is not implemented.
     def load_model_from_checkpoint(self, checkpoint_path: str, device: str = "cpu"):
@@ -624,29 +613,4 @@ class SemiSupervisedRunner(BaseRunner):
             val_labeled_dataloader,
             test_labeled_dataloader,
             train_unlabeled_dataloader,
-        )
-
-    def _create_feature_extractor_from_config(self) -> BaseFeatureExtractor:
-        """Create feature extractor based on semi-supervised config."""
-        semi_supervised_config = self.config.semi_supervised.semi_supervised_config
-        feature_extractor_config = self.config.architectures.feature_extractors_config[
-            semi_supervised_config.feature_extractor_name
-        ]
-        return BaseFeatureExtractor.create_feature_extractor(
-            feature_extractor_name=semi_supervised_config.feature_extractor_name,
-            input_dim=self.config.general_config.data.downscaled_image_size,
-            feature_extractor_config=feature_extractor_config.to_dict(),
-        )
-
-    def _create_classifier_from_config(self, input_size: int) -> BaseClassifier:
-        """Create classifier based on semi-supervised config."""
-        semi_supervised_config = self.config.semi_supervised.semi_supervised_config
-        classifier_config = self.config.architectures.classifiers_config[
-            semi_supervised_config.classifier_name
-        ]
-        return BaseClassifier.create_classifier(
-            classifier_name=semi_supervised_config.classifier_name,
-            input_size=input_size,
-            output_size=len(self.config.label_to_name),
-            classifier_config=classifier_config.to_dict(),
         )

@@ -10,10 +10,6 @@ from models.modules.supervised.lightning_supervised_module import (
     LightningSupervisedModule,
 )
 from models.data.lightning_data_module import SupervisedPlaqueLightningDataModule
-from models.modules.supervised.feature_extractors.base_feature_extractor import (
-    BaseFeatureExtractor,
-)
-from models.modules.supervised.classifiers.base_classifier import BaseClassifier
 import torch.nn as nn
 from torchvision import transforms as trf
 from models.data.plaque_dataset import PlaqueDatasetAugmented
@@ -175,13 +171,6 @@ class SupervisedRunner(BaseRunner):
             aggregated_classification_reports_df, folder_path=self.runs_folder
         )
 
-    def _get_tuning_config_section(self):
-        return ("supervised", "supervised_config")
-
-    def _get_feature_extractor_and_classifier_names(self):
-        sc = self.config.supervised.supervised_config
-        return sc.feature_extractor_name, sc.classifier_name
-
     def load_model_from_checkpoint(self, checkpoint_path: str, device: str = "cpu"):
         # TODO: needs to get fixed
         """
@@ -231,9 +220,9 @@ class SupervisedRunner(BaseRunner):
         print(f"Model loaded from: {checkpoint_path}")
         print(f"Model type: {self._type()}")
         print(
-            f"Feature extractor: {self.config.supervised.supervised_config.feature_extractor_name}"
+            f"Feature extractor: {self.config.general_config.architecture.feature_extractor_name}"
         )
-        print(f"Classifier: {self.config.supervised.supervised_config.classifier_name}")
+        print(f"Classifier: {self.config.general_config.architecture.classifier_name}")
         print(f"Device: {device}")
 
         return model
@@ -562,25 +551,4 @@ class SupervisedRunner(BaseRunner):
             train_labeled_dataloader,
             val_labeled_dataloader,
             test_labeled_dataloader,
-        )
-
-    def _create_feature_extractor_from_config(self) -> BaseFeatureExtractor:
-        """Create feature extractor based on config."""
-        return BaseFeatureExtractor.create_feature_extractor(
-            feature_extractor_name=self.config.supervised.supervised_config.feature_extractor_name,
-            input_dim=self.config.general_config.data.downscaled_image_size,
-            feature_extractor_config=self.config.architectures.feature_extractors_config[
-                self.config.supervised.supervised_config.feature_extractor_name
-            ].to_dict(),
-        )
-
-    def _create_classifier_from_config(self, input_size: int) -> BaseClassifier:
-        """Create classifier based on config."""
-        return BaseClassifier.create_classifier(
-            classifier_name=self.config.supervised.supervised_config.classifier_name,
-            input_size=input_size,
-            output_size=len(self.config.label_to_name),
-            classifier_config=self.config.architectures.classifiers_config[
-                self.config.supervised.supervised_config.classifier_name
-            ].to_dict(),
         )

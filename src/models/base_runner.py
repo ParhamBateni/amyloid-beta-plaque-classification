@@ -22,6 +22,10 @@ from utils.hyperparameter_tuning_utils import (
 from typing import List, Tuple
 import json
 import copy
+from models.modules.architecture.feature_extractors.base_feature_extractor import (
+    BaseFeatureExtractor,
+)
+from models.modules.architecture.classifiers.base_classifier import BaseClassifier
 
 
 class BaseRunner(ABC):
@@ -42,6 +46,22 @@ class BaseRunner(ABC):
             # This is done so that the runs folder is the same for all trials in hyperparameter tuning
             # Which is useful to continue the hyperparameter tuning from the previous trial in case it takes a long time
             self.runs_folder = os.path.join(self.runs_folder, config.run_id)
+        else:
+            if (
+                len(
+                    config.general_config.hyperparameter_tuning.architecture.feature_extractor_name
+                )
+                == 1
+            ):
+                # To make the runs folder unique for each feature extractor for hyperparameter tuning
+                self.runs_folder = os.path.join(
+                    self.runs_folder,
+                    config.general_config.hyperparameter_tuning.architecture.feature_extractor_name[
+                        0
+                    ],
+                )
+            else:
+                self.runs_folder = os.path.join(self.runs_folder, "mixed")
 
         os.makedirs(self.runs_folder, exist_ok=True)
         self.config.save_config(folder_path=self.runs_folder)
@@ -93,7 +113,8 @@ class BaseRunner(ABC):
                 )
 
             # Mode-specific config (supervised, semi_supervised, self_supervised)
-            section_name, config_key = copy_runner._get_tuning_config_section()
+            section_name = self._type()
+            config_key = section_name + "_config"
             section = getattr(copy_runner.config, section_name, None)
             if section is not None:
                 mode_config = getattr(section, config_key, None)
@@ -112,9 +133,10 @@ class BaseRunner(ABC):
                 set_nested(copy_runner.config, key, value)
 
             # Feature extractor and classifier params
-            fe_name, clf_name = (
-                copy_runner._get_feature_extractor_and_classifier_names()
+            fe_name = (
+                copy_runner.config.general_config.architecture.feature_extractor_name
             )
+            clf_name = copy_runner.config.general_config.architecture.classifier_name
             fe_cfg = copy_runner.config.architectures.feature_extractors_config[fe_name]
             if (
                 hasattr(fe_cfg, "hyperparameter_tuning")
@@ -168,12 +190,25 @@ class BaseRunner(ABC):
                     and dict(t.params) == trial_params
                 ):
                     # Copy cv_std for CSV/tracking
-                    trial.set_user_attr("mean_f1", t.user_attrs.get("mean_f1", float("nan")))
-                    trial.set_user_attr("cv_std_f1", t.user_attrs.get("cv_std_f1", float("nan")))
-                    trial.set_user_attr("mean_accuracy", t.user_attrs.get("mean_accuracy", float("nan")))
-                    trial.set_user_attr("cv_std_accuracy", t.user_attrs.get("cv_std_accuracy", float("nan")))
-                    trial.set_user_attr("mean_loss", t.user_attrs.get("mean_loss", float("nan")))
-                    trial.set_user_attr("cv_std_loss", t.user_attrs.get("cv_std_loss", float("nan")))
+                    trial.set_user_attr(
+                        "mean_f1", t.user_attrs.get("mean_f1", float("nan"))
+                    )
+                    trial.set_user_attr(
+                        "cv_std_f1", t.user_attrs.get("cv_std_f1", float("nan"))
+                    )
+                    trial.set_user_attr(
+                        "mean_accuracy", t.user_attrs.get("mean_accuracy", float("nan"))
+                    )
+                    trial.set_user_attr(
+                        "cv_std_accuracy",
+                        t.user_attrs.get("cv_std_accuracy", float("nan")),
+                    )
+                    trial.set_user_attr(
+                        "mean_loss", t.user_attrs.get("mean_loss", float("nan"))
+                    )
+                    trial.set_user_attr(
+                        "cv_std_loss", t.user_attrs.get("cv_std_loss", float("nan"))
+                    )
                     trial.set_user_attr("repeated_trial", True)
                     with open(os.path.join(trial_folder, "params.json"), "w") as f:
                         json.dump(trial.params, f, indent=2)
@@ -236,16 +271,6 @@ class BaseRunner(ABC):
             log_dir=ht_base,
             n_jobs=self.config.general_config.training.num_workers,
         )
-
-    @abstractmethod
-    def _get_tuning_config_section(self) -> Tuple[str, str]:
-        """Return (section_name, config_key) for mode-specific config, e.g. ('supervised', 'supervised_config')."""
-        pass
-
-    @abstractmethod
-    def _get_feature_extractor_and_classifier_names(self) -> Tuple[str, str]:
-        """Return (feature_extractor_name, classifier_name) from config."""
-        pass
 
     def _apply_extra_tuning_params(self, trial) -> None:
         """Override in subclasses to add mode-specific tuning params (e.g. SSL method config). No-op by default."""
@@ -337,6 +362,29 @@ class BaseRunner(ABC):
             check_val_every_n_epoch=self.config.general_config.training.early_stop_check_val_every_n_epoch,
             logger=False,
             enable_model_summary=False,
+        )
+
+    def _create_feature_extractor_from_config(self) -> BaseFeatureExtractor:
+        """Create feature extractor based on semi-supervised config."""
+        feature_extractor_config = self.config.architectures.feature_extractors_config[
+            self.config.general_config.architecture.feature_extractor_name
+        ]
+        return BaseFeatureExtractor.create_feature_extractor(
+            feature_extractor_name=self.config.general_config.architecture.feature_extractor_name,
+            input_dim=self.config.general_config.data.downscaled_image_size,
+            feature_extractor_config=feature_extractor_config.to_dict(),
+        )
+
+    def _create_classifier_from_config(self, input_size: int) -> BaseClassifier:
+        """Create classifier based on semi-supervised config."""
+        classifier_config = self.config.architectures.classifiers_config[
+            self.config.general_config.architecture.classifier_name
+        ]
+        return BaseClassifier.create_classifier(
+            classifier_name=self.config.general_config.architecture.classifier_name,
+            input_size=input_size,
+            output_size=len(self.config.label_to_name),
+            classifier_config=classifier_config.to_dict(),
         )
 
     @staticmethod

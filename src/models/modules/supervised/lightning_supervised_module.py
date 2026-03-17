@@ -5,8 +5,10 @@ from typing import Any, Callable, Iterable, Tuple, Optional
 from sklearn.metrics import f1_score
 import numpy as np
 
-from .feature_extractors.base_feature_extractor import BaseFeatureExtractor
-from .classifiers.base_classifier import BaseClassifier
+from models.modules.architecture.feature_extractors.base_feature_extractor import (
+    BaseFeatureExtractor,
+)
+from models.modules.architecture.classifiers.base_classifier import BaseClassifier
 
 
 class LightningSupervisedModule(pl.LightningModule):

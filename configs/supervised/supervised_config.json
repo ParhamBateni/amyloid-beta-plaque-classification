@@ -1,8 +1,2 @@
 {
-    "feature_extractor_name": "simple_cnn",
-    "classifier_name": "linear",
-    "hyperparameter_tuning": {
-        "feature_extractor_name": ["resnet18"],
-        "classifier_name": ["linear", "mlp"]
-    }
 }

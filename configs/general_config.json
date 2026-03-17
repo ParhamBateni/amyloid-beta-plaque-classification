@@ -18,12 +18,20 @@
         "extra_feature_dim": 2,
         "number_of_augmentations": 3
     },
+    "architecture": {
+        "feature_extractor_name": "simple_cnn",
+        "classifier_name": "linear",
+        "hyperparameter_tuning": {
+            "feature_extractor_name": ["resnet18"],
+            "classifier_name": ["linear"]
+        }
+    },
     "training": {
         "test_size": 0.2,
         "val_size": 0.1,
         "num_workers": 2,
         "pin_memory": true,
-        "persistent_workers": false,
+        "persistent_workers": true,
 
         "batch_size": 64,
         "num_epochs": 200,
@@ -46,6 +54,10 @@
         "seed_everything": true
     },
     "hyperparameter_tuning": {
+        "architecture": {
+            "feature_extractor_name": ["resnet18"],
+            "classifier_name": ["linear", "mlp"]
+        },
         "training": {
             "learning_rate": [1e-5, 5e-5, 1e-4],
             "batch_size": [32, 64],

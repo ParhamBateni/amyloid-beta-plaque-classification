@@ -5,8 +5,10 @@ import pytorch_lightning as pl
 from typing import Any, Callable, Iterable, Tuple
 from abc import ABC, abstractmethod
 import math
-from ..supervised.feature_extractors.base_feature_extractor import BaseFeatureExtractor
-from ..supervised.classifiers.base_classifier import BaseClassifier
+from models.modules.architecture.feature_extractors.base_feature_extractor import (
+    BaseFeatureExtractor,
+)
+from models.modules.architecture.classifiers.base_classifier import BaseClassifier
 from sklearn.metrics import f1_score
 import numpy as np
 

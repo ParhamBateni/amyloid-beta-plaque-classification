@@ -3,7 +3,7 @@ import torch
 from typing import Any, Callable, Iterable, Tuple, Dict
 from abc import ABC, abstractmethod
 
-from models.modules.supervised.feature_extractors.base_feature_extractor import (
+from models.modules.architecture.feature_extractors.base_feature_extractor import (
     BaseFeatureExtractor,
 )
 

@@ -66,7 +66,7 @@ def run_optuna_study(
 
     # TODO: You might want to consider using a pruner to avoid running trials that are already known to be bad
     study = optuna.create_study(
-        direction="maximize", # We maximize the F1 score
+        direction="maximize",  # We maximize the F1 score
         study_name=study_name,
         storage=storage,
         load_if_exists=True,

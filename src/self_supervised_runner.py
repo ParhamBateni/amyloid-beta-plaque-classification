@@ -11,10 +11,6 @@ from models.data.lightning_data_module import (
     SelfSupervisedPlaqueLightningDataModule,
     SupervisedPlaqueLightningDataModule,
 )
-from models.modules.supervised.feature_extractors.base_feature_extractor import (
-    BaseFeatureExtractor,
-)
-from models.modules.supervised.classifiers.base_classifier import BaseClassifier
 from models.modules.supervised.lightning_supervised_module import (
     LightningSupervisedModule,
 )
@@ -252,13 +248,6 @@ class SelfSupervisedRunner(BaseRunner):
         save_classification_report(
             aggregated_classification_reports_df, folder_path=self.runs_folder
         )
-
-    def _get_tuning_config_section(self):
-        return ("self_supervised", "self_supervised_config")
-
-    def _get_feature_extractor_and_classifier_names(self):
-        ssc = self.config.self_supervised.self_supervised_config
-        return ssc.feature_extractor_name, ssc.classifier_name
 
     def _apply_extra_tuning_params(self, trial):
         """Apply SSL method config (simclr, vae) tuning params."""
@@ -741,17 +730,4 @@ class SelfSupervisedRunner(BaseRunner):
             getattr(pl_module, "val_f1s", pl_module.val_accuracies),
             pl_module.test_labels,
             pl_module.test_preds,
-        )
-
-    def _create_classifier_from_config(self, input_size: int) -> BaseClassifier:
-        """Create classifier head based on self-supervised config."""
-        self_supervised_config = self.config.self_supervised.self_supervised_config
-        classifier_config = self.config.architectures.classifiers_config[
-            self_supervised_config.classifier_name
-        ]
-        return BaseClassifier.create_classifier(
-            classifier_name=self_supervised_config.classifier_name,
-            input_size=input_size,
-            output_size=len(self.config.label_to_name),
-            classifier_config=classifier_config.to_dict(),
         )
