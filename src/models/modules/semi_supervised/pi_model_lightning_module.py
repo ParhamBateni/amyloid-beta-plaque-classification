@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 from typing import Any
 from .base_lightning_semi_supervised_module import BaseLightningSemiSupervisedModule
-from ..supervised.feature_extractors.base_feature_extractor import BaseFeatureExtractor
-from ..supervised.classifiers.base_classifier import BaseClassifier
+from models.modules.architecture.feature_extractors.base_feature_extractor import BaseFeatureExtractor
+from models.modules.architecture.classifiers.base_classifier import BaseClassifier
 from typing import Callable, Iterable
 
 

@@ -1,5 +1,5 @@
 {
-    "model_name": "mean_teacher",
+    "model_name": "pi_model",
     "training": {
         "consistency_lambda_max": 0.1,
         "consistency_loss_type": "cross_entropy",
@@ -8,8 +8,10 @@
     },
     "hyperparameter_tuning": {
         "training": {
-            "consistency_lambda_max": [0.05, 0.1],
-            "ramp_up_epochs": [50, 100]
+            "consistency_lambda_max": [0.05, 0.1, 0.2, 0.5],
+            "ramp_up_epochs": [10, 50, 100],
+            "ramp_up_function": ["linear", "sigmoid", "fixed"],
+            "consistency_loss_type": ["mse", "kl", "cross_entropy"]
         }
     }
 }

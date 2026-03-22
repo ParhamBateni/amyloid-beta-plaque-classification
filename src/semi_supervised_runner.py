@@ -285,6 +285,7 @@ class SemiSupervisedRunner(BaseRunner):
             test_labeled_plaque_dataloader=test_labeled_dataloader,
             unlabeled_plaque_dataloader=unlabeled_dataloader,
         )
+        trainer.fit(pl_module, datamodule=data_module)
 
         checkpoint_path = os.path.join(
             self.runs_folder, "checkpoints", "best_model.ckpt"
