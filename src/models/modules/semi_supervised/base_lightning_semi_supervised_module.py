@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from typing import Any, Callable, Iterable, Tuple
+from typing import Any, Callable, Iterable, Tuple, Union
 from abc import ABC, abstractmethod
 import math
 from models.modules.architecture.feature_extractors.base_feature_extractor import (
@@ -145,8 +145,8 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
     def predict(
         self,
         x_image: torch.Tensor,
-        x_features: torch.Tensor | None = None,
-        use_thresholds: bool | None = None,
+        x_features: Union[torch.Tensor, None] = None,
+        use_thresholds: Union[bool, None] = None,
     ) -> torch.Tensor:
         """
         Public prediction API for new data in semi-supervised models.
