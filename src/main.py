@@ -17,14 +17,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--train_mode",
         type=str,
-        default="semi_supervised",
+        default="supervised",
         choices=["supervised", "semi_supervised", "self_supervised"],
         help="Training mode to use",
     )
     parser.add_argument(
         "--run_mode",
         type=str,
-        default="hyperparameter_tuning",
+        default="single",
         choices=["single", "cross_validate", "hyperparameter_tuning"],
         help="Run mode to use",
     )
