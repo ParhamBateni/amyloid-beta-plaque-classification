@@ -8,6 +8,7 @@
     "weight_decay": 1e-5
   },
   "hyperparameter_tuning": {
+    "pretraining_method": ["simclr"],
     "pretraining": {
       "num_epochs": [30, 50],
       "learning_rate": [1e-5, 5e-5],

@@ -27,7 +27,6 @@ from models.modules.architecture.feature_extractors.base_feature_extractor impor
 )
 from models.modules.architecture.classifiers.base_classifier import BaseClassifier
 
-
 class BaseRunner(ABC):
     def __init__(self, config: Config, run_mode: str):
         self.config = config
@@ -47,6 +46,19 @@ class BaseRunner(ABC):
             # Which is useful to continue the hyperparameter tuning from the previous trial in case it takes a long time
             self.runs_folder = os.path.join(self.runs_folder, config.run_id)
         else:
+            from semi_supervised_runner import SemiSupervisedRunner
+            from self_supervised_runner import SelfSupervisedRunner
+
+            if isinstance(self, SemiSupervisedRunner):
+                methods = self.config.semi_supervised.semi_supervised_config.hyperparameter_tuning.model_name
+            elif isinstance(self, SelfSupervisedRunner):
+                methods = self.config.self_supervised.self_supervised_config.hyperparameter_tuning.pretraining_method
+            else:
+                methods = []
+            if len(methods) == 1:
+                self.runs_folder = os.path.join(self.runs_folder, methods[0])
+            elif len(methods) >1:
+                self.runs_folder = os.path.join(self.runs_folder, "mixed")
             if (
                 len(
                     config.general_config.hyperparameter_tuning.architecture.feature_extractor_name

@@ -25,7 +25,7 @@ from utils import (
 )
 from sklearn.metrics import confusion_matrix as sklearn_confusion_matrix
 from pytorch_lightning.utilities.model_summary import summarize
-
+from typing import List
 
 class SupervisedRunner(BaseRunner):
     def __init__(self, config: Config, run_mode: str):
@@ -461,6 +461,10 @@ class SupervisedRunner(BaseRunner):
 
     def _type(self) -> str:
         return "supervised"
+
+
+    def _method(self) -> List[str]:
+        return []
 
     def _load_dataloaders(
         self,
