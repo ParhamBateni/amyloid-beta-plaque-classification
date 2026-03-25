@@ -557,7 +557,7 @@ class SemiSupervisedRunner(BaseRunner):
         )
         unlabeled_strong_transforms = trf.Compose(
             [
-                trf.RandAugment(num_ops=2, magnitude=5),
+                trf.RandAugment(num_ops=2, magnitude=10),
                 trf.ToTensor(),
             ]
         )
