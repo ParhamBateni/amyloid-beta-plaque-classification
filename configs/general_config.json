@@ -55,7 +55,7 @@
     },
     "hyperparameter_tuning": {
         "architecture": {
-            "feature_extractor_name": ["simple_cnn"],
+            "feature_extractor_name": ["resnet50"],
             "classifier_name": ["linear"]
         },
         "training": {
