@@ -126,13 +126,13 @@ def create_data_table(
     # Create folders for images if saving
     if save_images:
         if clear_intermediate:
-            if os.path.exists(os.path.join(data_folder, labeled_folder)):
-                shutil.rmtree(os.path.join(data_folder, labeled_folder))
-            if os.path.exists(os.path.join(data_folder, unlabeled_folder)):
-                shutil.rmtree(os.path.join(data_folder, unlabeled_folder))
+            if os.path.exists(os.path.join(data_folder, labeled_result_folder)):
+                shutil.rmtree(os.path.join(data_folder, labeled_result_folder))
+            if os.path.exists(os.path.join(data_folder, unlabeled_result_folder)):
+                shutil.rmtree(os.path.join(data_folder, unlabeled_result_folder))
         # Ensure folders exist but do not clear unless requested
-        os.makedirs(os.path.join(data_folder, labeled_folder), exist_ok=True)
-        os.makedirs(os.path.join(data_folder, unlabeled_folder), exist_ok=True)
+        os.makedirs(os.path.join(data_folder, labeled_result_folder), exist_ok=True)
+        os.makedirs(os.path.join(data_folder, unlabeled_result_folder), exist_ok=True)
 
     # First, get total count and file list
     total_plaques, files = get_total_plaques_count(data_folder, unlabeled_folder)
