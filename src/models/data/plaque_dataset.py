@@ -453,16 +453,18 @@ if __name__ == "__main__":
     #     plt.imshow(normalized_transformed_image_tensor)
     #     plt.show()
     #     i+=8
-
+    import time
+    t0 = time.time()
     ds = PlaqueDataset(
         sample_df,
         labeled_data_folder_path,
         name_to_label=config.name_to_label,
         transforms=aug_transform,
+        preload = True,
         description="labeled images (aug)",
         normalize_data=False,
     )
-
+    print(f"Time taken to load dataset: {time.time() - t0} seconds")
     import numpy as np
 
     LIMIT = min(8, len(ds))
@@ -471,6 +473,7 @@ if __name__ == "__main__":
         axes = np.expand_dims(axes, axis=0)
     for i in range(LIMIT):
         # Get raw (unaugmented) and augmented samples from the datasets
+        t0 = time.time()
         (
             image_path,
             normalized_raw_image_tensor,
@@ -478,6 +481,7 @@ if __name__ == "__main__":
             extra_features,
             label,
         ) = ds[i]
+        print(f"Time taken to get item: {time.time() - t0} seconds")
         normalized_transformed_image_tensor = normalized_transformed_image_tensors[0]
         # Move channel to last dimension for imshow
         normalized_raw_image_tensor = (

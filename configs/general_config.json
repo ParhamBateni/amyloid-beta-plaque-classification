@@ -9,7 +9,7 @@
         "downscaling_method": "bilinear",
         "unlabeled_sample_size": 5000,
         "labeled_sample_size": 1e9,
-        "preload_data": true,
+        "preload": true,
         "apply_transforms_on_the_fly": false,
         "normalize_data": true,
         "normalize_mean": [0.485, 0.456, 0.406],
