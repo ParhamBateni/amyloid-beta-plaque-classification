@@ -7,7 +7,7 @@
         "runs_folder": "runs",
         "downscaled_image_size": [224, 224],
         "downscaling_method": "bilinear",
-        "unlabeled_sample_size": 5000,
+        "unlabeled_sample_size": 10000,
         "labeled_sample_size": 1e9,
         "preload": true,
         "apply_transforms_on_the_fly": false,
