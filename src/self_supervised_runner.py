@@ -430,16 +430,38 @@ class SelfSupervisedRunner(BaseRunner):
         self, unlabeled_data_df: pd.DataFrame
     ) -> torch.utils.data.DataLoader:
         """Load unlabeled dataloader for self-supervised learning."""
-        unlabeled_weak_transforms = trf.Compose(
+        # SimCLR-style defaults: two independently sampled strong views.
+        unlabeled_view_1_transforms = trf.Compose(
             [
+                trf.RandomResizedCrop(
+                    size=self.config.general_config.data.downscaled_image_size,
+                    scale=(0.2, 1.0),
+                ),
                 trf.RandomHorizontalFlip(p=0.5),
                 trf.RandomVerticalFlip(p=0.5),
+                trf.RandomApply(
+                    [trf.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1)],
+                    p=0.8,
+                ),
+                trf.RandomGrayscale(p=0.2),
+                trf.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
                 trf.ToTensor(),
             ]
         )
-        unlabeled_strong_transforms = trf.Compose(
+        unlabeled_view_2_transforms = trf.Compose(
             [
-                trf.RandAugment(num_ops=5, magnitude=5),
+                trf.RandomResizedCrop(
+                    size=self.config.general_config.data.downscaled_image_size,
+                    scale=(0.2, 1.0),
+                ),
+                trf.RandomHorizontalFlip(p=0.5),
+                trf.RandomVerticalFlip(p=0.5),
+                trf.RandomApply(
+                    [trf.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1)],
+                    p=0.8,
+                ),
+                trf.RandomGrayscale(p=0.2),
+                trf.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
                 trf.ToTensor(),
             ]
         )
@@ -451,7 +473,7 @@ class SelfSupervisedRunner(BaseRunner):
             unlabeled_data_df,
             data_folder_path=unlabeled_data_folder_path,
             name_to_label=self.config.name_to_label,
-            transforms=[unlabeled_weak_transforms, unlabeled_strong_transforms],
+            transforms=[unlabeled_view_1_transforms, unlabeled_view_2_transforms],
             preload=self.config.general_config.data.preload,
             description="unlabeled plaque images",
             normalize_data=self.config.general_config.data.normalize_data,

@@ -546,21 +546,30 @@ class SemiSupervisedRunner(BaseRunner):
             number_of_augmentations=0,
         )
 
-        # TODO: To be adjusted later.
-        # Weak augmentation: minimal changes
-        unlabeled_weak_transforms = trf.Compose(
-            [
-                trf.RandomHorizontalFlip(p=0.5),
-                trf.RandomVerticalFlip(p=0.5),
-                trf.ToTensor(),
-            ]
-        )
-        unlabeled_strong_transforms = trf.Compose(
-            [
-                trf.RandAugment(num_ops=2, magnitude=10),
-                trf.ToTensor(),
-            ]
-        )
+        # FixMatch-style defaults: weak view for pseudo-labeling, strong view for consistency.
+        # Weak view for pseudo-labels (same as original FixMatch)
+        unlabeled_weak_transforms = trf.Compose([
+            trf.RandomHorizontalFlip(p=0.5),
+            trf.RandomVerticalFlip(p=0.5),
+            trf.RandomResizedCrop(
+                size=self.config.general_config.data.downscaled_image_size, 
+                scale=(0.8, 1.0)
+            ),
+            trf.ToTensor(),
+        ])
+
+        # Strong view for consistency (same as original FixMatch)
+        unlabeled_strong_transforms = trf.Compose([
+            trf.RandomHorizontalFlip(p=0.5),
+            trf.RandomVerticalFlip(p=0.5),
+            trf.RandomResizedCrop(
+                size=self.config.general_config.data.downscaled_image_size, 
+                scale=(0.8, 1.0)
+            ),
+            trf.RandAugment(num_ops=2, magnitude=10),
+            trf.ToTensor(),
+        ])
+        
         train_unlabeled_plaque_dataset = PlaqueDataset(
             unlabeled_data_df,
             data_folder_path=unlabeled_data_folder_path,
