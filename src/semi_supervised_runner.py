@@ -503,6 +503,7 @@ class SemiSupervisedRunner(BaseRunner):
             data_folder_path=labeled_data_folder_path,
             name_to_label=self.config.name_to_label,
             transforms=labeled_train_transforms,
+            preload=self.config.general_config.data.preload,
             description="train labeled plaque images",
             normalize_data=self.config.general_config.data.normalize_data,
             normalize_mean=self.config.general_config.data.normalize_mean,
@@ -518,6 +519,7 @@ class SemiSupervisedRunner(BaseRunner):
             data_folder_path=labeled_data_folder_path,
             name_to_label=self.config.name_to_label,
             transforms=None,
+            preload=self.config.general_config.data.preload,
             description="val labeled plaque images",
             normalize_data=self.config.general_config.data.normalize_data,
             normalize_mean=self.config.general_config.data.normalize_mean,
@@ -533,6 +535,7 @@ class SemiSupervisedRunner(BaseRunner):
             data_folder_path=labeled_data_folder_path,
             name_to_label=self.config.name_to_label,
             transforms=None,
+            preload=self.config.general_config.data.preload,
             description="test labeled plaque images",
             normalize_data=self.config.general_config.data.normalize_data,
             normalize_mean=self.config.general_config.data.normalize_mean,
@@ -554,7 +557,7 @@ class SemiSupervisedRunner(BaseRunner):
         )
         unlabeled_strong_transforms = trf.Compose(
             [
-                trf.RandAugment(num_ops=2, magnitude=10),
+                trf.RandAugment(num_ops=2, magnitude=5),
                 trf.ToTensor(),
             ]
         )
@@ -563,6 +566,7 @@ class SemiSupervisedRunner(BaseRunner):
             data_folder_path=unlabeled_data_folder_path,
             name_to_label=self.config.name_to_label,
             transforms=[unlabeled_weak_transforms, unlabeled_strong_transforms],
+            preload=self.config.general_config.data.preload,
             description="train unlabeled plaque images",
             normalize_data=self.config.general_config.data.normalize_data,
             normalize_mean=self.config.general_config.data.normalize_mean,
