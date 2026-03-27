@@ -17,3 +17,6 @@ __pycache__
 *.pages
 data.zip
 .DS_Store
+.venv-backups
+.hf_home
+notes.txt

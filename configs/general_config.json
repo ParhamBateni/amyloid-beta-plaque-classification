@@ -19,7 +19,7 @@
         "number_of_augmentations": 3
     },
     "architecture": {
-        "feature_extractor_name": "simple_cnn",
+        "feature_extractor_name": "resnet18",
         "classifier_name": "linear",
         "hyperparameter_tuning": {
             "feature_extractor_name": ["resnet18"],
@@ -29,7 +29,7 @@
     "training": {
         "test_size": 0.2,
         "val_size": 0.1,
-        "num_workers": 4,
+        "num_workers": 8,
         "pin_memory": true,
         "persistent_workers": false,
 

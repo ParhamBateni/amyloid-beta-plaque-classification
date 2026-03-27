@@ -440,7 +440,7 @@ class SupervisedRunner(BaseRunner):
             ) = self._run_single_experiment(
                 train_labeled_data_df=train_labeled_data_df,
                 val_labeled_data_df=val_labeled_data_df,
-                test_labeled_data_df=None,
+                test_labeled_data_df=pd.DataFrame(),
                 trainer=trainer,
             )
             kfold_train_losses.append(train_losses[-1])
