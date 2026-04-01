@@ -7,7 +7,7 @@
         "ramp_up_function": "linear"
     },
     "hyperparameter_tuning": {
-        "model_name": ["pi_model"],
+        "model_name": ["mean_teacher"],
         "training": {
             "consistency_lambda_max": [0.05, 0.1, 0.2, 0.5],
             "ramp_up_epochs": [10, 50, 100],

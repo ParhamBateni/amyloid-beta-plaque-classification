@@ -12,18 +12,11 @@ from torchvision import transforms as trf
 from models.data.plaque_dataset import PlaqueDatasetAugmented, PlaqueDataset
 from pytorch_lightning.utilities.model_summary import summarize
 from tqdm import tqdm
-from utils import (
-    generate_classification_report_df,
-    aggregate_reports,
-    save_classification_report,
-    save_loss_and_accuracy,
-    plot_loss_and_accuracy,
-    plot_confusion_matrix,
-)
-from sklearn.metrics import confusion_matrix as sklearn_confusion_matrix
 from models.modules.semi_supervised.base_lightning_semi_supervised_module import (
     BaseLightningSemiSupervisedModule,
 )
+import numpy as np
+from utils.hyperparameter_tuning_utils import suggest_params_from_dict
 
 
 class SemiSupervisedRunner(BaseRunner):
@@ -32,162 +25,24 @@ class SemiSupervisedRunner(BaseRunner):
     def __init__(self, config: Config, run_mode: str):
         super().__init__(config, run_mode)
 
-    def run_single_experiment(self):
-        """Run a single semi-supervised experiment."""
-        # Split labeled data
-        train_labeled_data_df, test_labeled_data_df = train_test_split(
-            self.labeled_data_df,
-            test_size=self.config.general_config.training.test_size,
-            stratify=self.labeled_data_df["Label"],
-            random_state=self.config.general_config.system.random_seed,
-        )
-        train_labeled_data_df, val_labeled_data_df = train_test_split(
-            train_labeled_data_df,
-            test_size=self.config.general_config.training.val_size
-            / (1 - self.config.general_config.training.test_size),
-            stratify=train_labeled_data_df["Label"],
-            random_state=self.config.general_config.system.random_seed,
-        )
+    def _apply_extra_tuning_params(self, trial):
+        """Apply semi-supervised config tuning params."""
 
-        # Create trainer (BaseRunner handles checkpointing, early stopping, logging)
-        trainer = self._create_base_trainer()
-
-        (
-            train_losses,
-            val_losses,
-            train_accuracies,
-            val_accuracies,
-            train_f1s,
-            val_f1s,
-            test_labels,
-            test_preds,
-        ) = self._run_single_experiment(
-            train_labeled_data_df=train_labeled_data_df,
-            val_labeled_data_df=val_labeled_data_df,
-            test_labeled_data_df=test_labeled_data_df,
-            unlabeled_data_df=self.unlabeled_data_df,
-            trainer=trainer,
+        method = self.config.semi_supervised.semi_supervised_config.model_name
+        method_cfg = getattr(
+            self.config.semi_supervised,
+            f"{method}_config",
+            None,
         )
-
-        # Save results
-        save_loss_and_accuracy(
-            train_losses,
-            val_losses,
-            train_f1s,
-            val_f1s,
-            train_accuracies,
-            val_accuracies,
-            folder_path=self.runs_folder,
-        )
-        plot_loss_and_accuracy(
-            train_losses,
-            val_losses,
-            train_f1s,
-            val_f1s,
-            train_accuracies,
-            val_accuracies,
-            folder_path=self.runs_folder,
-        )
-        plot_loss_and_accuracy(
-            train_losses,
-            val_losses,
-            train_f1s,
-            val_f1s,
-            train_accuracies,
-            val_accuracies,
-            folder_path=self.runs_folder,
-            save=True,
-        )
-        confusion_matrix = sklearn_confusion_matrix(
-            test_labels, test_preds, labels=list(self.config.name_to_label.values())
-        )
-        plot_confusion_matrix(
-            confusion_matrix,
-            self.config.name_to_label.keys(),
-            folder_path=self.runs_folder,
-            save=True,
-        )
-
-        # Save classification report
-        classification_report_df = generate_classification_report_df(
-            test_labels, test_preds, self.config.name_to_label.keys()
-        )
-        self.log_file_writer.write("Classification report:")
-        self.log_file_writer.write(classification_report_df.to_string())
-        save_classification_report(
-            classification_report_df, folder_path=self.runs_folder
-        )
-
-    def cross_validate(self):
-        """Run cross-validation for semi-supervised learning."""
-        (
-            kfold_train_losses,
-            kfold_val_losses,
-            kfold_train_accuracies,
-            kfold_val_accuracies,
-            kfold_test_labels,
-            kfold_test_preds,
-            best_trainer,
-        ) = self._cross_validate()
-
-        if (
-            best_trainer is not None
-            and not self.config.general_config.system.debug_mode
-        ):
-            best_trainer.save_checkpoint(
-                os.path.join(self.runs_folder, "best_model_cv.ckpt")
-            )
-
-        # Save results
-        save_loss_and_accuracy(
-            kfold_train_losses,
-            kfold_val_losses,
-            kfold_train_accuracies,
-            kfold_val_accuracies,
-            folder_path=self.runs_folder,
-            name=f"kfold_train_val_training_report.txt",
-        )
-
-        # Confusion matrices
-        confusion_matrices = []
-        for test_labels, test_preds in zip(kfold_test_labels, kfold_test_preds):
-            confusion_matrix = sklearn_confusion_matrix(
-                test_labels, test_preds, labels=list(self.config.name_to_label.values())
-            )
-            confusion_matrices.append(
-                pd.DataFrame(
-                    confusion_matrix,
-                    index=self.config.name_to_label.keys(),
-                    columns=self.config.name_to_label.keys(),
-                )
-            )
-        aggregated_confusion_matrix = aggregate_reports(
-            confusion_matrices, include_std=False
-        ).to_numpy()
-        plot_confusion_matrix(
-            aggregated_confusion_matrix,
-            self.config.name_to_label.keys(),
-            folder_path=self.runs_folder,
-            save=True,
-        )
-
-        # Classification reports
-        classification_reports_df = []
-        for test_labels, test_preds in zip(kfold_test_labels, kfold_test_preds):
-            classification_reports_df.append(
-                generate_classification_report_df(
-                    test_labels, test_preds, self.config.name_to_label.keys()
-                )
-            )
-        aggregated_classification_reports_df = aggregate_reports(
-            classification_reports_df
-        )
-        self.log_file_writer.write("Aggregated classification report:")
-        self.log_file_writer.write(aggregated_classification_reports_df.to_string())
-        save_classification_report(
-            aggregated_classification_reports_df, folder_path=self.runs_folder
-        )
-
+        if method_cfg is not None and hasattr(method_cfg, "hyperparameter_tuning"):
+            ht = method_cfg.hyperparameter_tuning
+            ht_dict = ht.to_dict() if hasattr(ht, "to_dict") else dict(ht)
+            for k, v in suggest_params_from_dict(
+                trial, ht_dict, f"semi_supervised_{method}"
+            ).items():
+                param_name = k.replace(f"semi_supervised_{method}.", "")
+                getattr(self.config.semi_supervised, f"{method}_config")[param_name] = v
+    
     # TODO: This function is not used yet, so it is not implemented.
     def load_model_from_checkpoint(self, checkpoint_path: str, device: str = "cpu"):
         """Load a semi-supervised model from checkpoint, auto-initializing components from config."""
@@ -198,7 +53,7 @@ class SemiSupervisedRunner(BaseRunner):
         self,
         train_labeled_data_df: pd.DataFrame,
         val_labeled_data_df: pd.DataFrame,
-        test_labeled_data_df: Union[pd.DataFrame, None],
+        test_labeled_data_df: pd.DataFrame,
         unlabeled_data_df: pd.DataFrame,
         trainer: pl.Trainer,
     ):
@@ -216,7 +71,6 @@ class SemiSupervisedRunner(BaseRunner):
             unlabeled_data_df,
         )
 
-        skip_test = test_labeled_data_df is None
         if self.config.general_config.system.debug_mode:
             self.log_file_writer.write("Statistics of the dataloaders:")
             self.log_file_writer.write(
@@ -226,7 +80,10 @@ class SemiSupervisedRunner(BaseRunner):
                 f"Val labeled dataloader size: {len(val_labeled_dataloader)}"
             )
             self.log_file_writer.write(
-                f"Test labeled dataloader size: {len(test_labeled_dataloader) if not skip_test else 0}"
+                f"Test labeled dataloader size: {len(test_labeled_dataloader)}"
+            )
+            self.log_file_writer.write(
+                f"Unlabeled dataloader size: {len(unlabeled_dataloader)}"
             )
         # Create model components
         feature_extractor = self._create_feature_extractor_from_config()
@@ -290,59 +147,32 @@ class SemiSupervisedRunner(BaseRunner):
         checkpoint_path = os.path.join(
             self.runs_folder, "checkpoints", "best_model.ckpt"
         )
-        if not skip_test:
-            results = trainer.test(
-                pl_module,
-                datamodule=data_module,
-                ckpt_path=checkpoint_path,
-                verbose=False,
-            )
-            self.log_file_writer.write(
-                f"Test results:\n{results[0] if results else {}}"
-            )
-        else:
-            results = None
-            self.log_file_writer.write("Test results: None")
+        results = trainer.test(
+            pl_module,
+            datamodule=data_module,
+            ckpt_path=checkpoint_path,
+            verbose=False,
+        )
+        self.log_file_writer.write(
+            f"Test results:\n{results[0] if results else {}}"
+        )
 
-        # TODO: Propose a better way to handle this
-        if (
-            skip_test or self.config.general_config.system.debug_mode
-        ) and os.path.exists(checkpoint_path):
+        if self.config.general_config.system.debug_mode and os.path.exists(checkpoint_path):
             os.remove(checkpoint_path)
             os.removedirs(os.path.join(self.runs_folder, "checkpoints"))
-        return (
-            pl_module.train_losses,
-            pl_module.val_losses,
-            pl_module.train_accuracies,
-            pl_module.val_accuracies,
-            pl_module.train_f1s,
-            pl_module.val_f1s,
-            pl_module.test_labels,
-            pl_module.test_preds,
-        )
 
-    def _cross_validate(self):
+        return pl_module.test_labels, pl_module.test_preds
+
+    def _cross_validate(self, labeled_kfold: StratifiedKFold):
         """Run cross-validation for semi-supervised learning."""
-        num_folds = round(1 / self.config.general_config.training.test_size)
-        kfold = StratifiedKFold(
-            n_splits=num_folds,
-            shuffle=True,
-            random_state=self.config.general_config.system.random_seed,
-        )
-        kfold_train_losses = []
-        kfold_val_losses = []
-        kfold_train_accuracies = []
-        kfold_val_accuracies = []
-        kfold_train_f1s = []
-        kfold_val_f1s = []
         kfold_test_labels = []
         kfold_test_preds = []
         best_val_loss = float("inf")
         best_trainer = None
 
         for fold, (train_idx, test_idx) in tqdm(
-            enumerate(kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
-            total=num_folds,
+            enumerate(labeled_kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
+            total=labeled_kfold.n_splits,
             desc="Cross-validating",
             file=self.log_file_writer,
         ):
@@ -356,17 +186,8 @@ class SemiSupervisedRunner(BaseRunner):
                 random_state=self.config.general_config.system.random_seed,
             )
 
-            trainer = self._create_base_trainer()
-            (
-                train_losses,
-                val_losses,
-                train_accuracies,
-                val_accuracies,
-                train_f1s,
-                val_f1s,
-                test_labels,
-                test_preds,
-            ) = self._run_single_experiment(
+            trainer = self._create_base_trainer(tensorboard_log_name=f"tensorboard_cv_{fold}")
+            test_labels, test_preds = self._run_single_experiment(
                 train_labeled_data_df=train_labeled_data_df,
                 val_labeled_data_df=val_labeled_data_df,
                 test_labeled_data_df=test_labeled_data_df,
@@ -374,31 +195,22 @@ class SemiSupervisedRunner(BaseRunner):
                 trainer=trainer,
             )
 
+            val_losses = trainer.callback_metrics["val_loss"]
             # Track the best model across all folds
             if val_losses[-1] < best_val_loss:
                 best_val_loss = val_losses[-1]
                 best_trainer = trainer
 
-            kfold_train_losses.append(train_losses[-1])
-            kfold_val_losses.append(val_losses[-1])
-            kfold_train_accuracies.append(train_accuracies[-1])
-            kfold_val_accuracies.append(val_accuracies[-1])
-            kfold_train_f1s.append(train_f1s[-1])
-            kfold_val_f1s.append(val_f1s[-1])
             kfold_test_labels.append(test_labels)
             kfold_test_preds.append(test_preds)
 
-        return (
-            kfold_train_losses,
-            kfold_val_losses,
-            kfold_train_accuracies,
-            kfold_val_accuracies,
-            kfold_train_f1s,
-            kfold_val_f1s,
-            kfold_test_labels,
-            kfold_test_preds,
-            best_trainer,
-        )
+        if not self.config.general_config.system.debug_mode:
+            checkpoint_path = os.path.join(
+                self.runs_folder, "checkpoints", "best_model_cv.ckpt"
+            )
+            best_trainer.save_checkpoint(checkpoint_path)
+
+        return kfold_test_labels, kfold_test_preds
 
     def _hyperparameter_tuning(self):
         """
@@ -450,12 +262,23 @@ class SemiSupervisedRunner(BaseRunner):
                 trainer=trainer,
             )
 
-            kfold_train_losses.append(train_losses[-1])
-            kfold_val_losses.append(val_losses[-1])
-            kfold_train_accuracies.append(train_accuracies[-1])
-            kfold_val_accuracies.append(val_accuracies[-1])
-            kfold_train_f1s.append(train_f1s[-1])
-            kfold_val_f1s.append(val_f1s[-1])
+            # The following part ensures that the best model performance based on the checkpoint monitor is used for the hyperparameter tuning
+            index = -1
+            if self.config.general_config.training.checkpoint_monitor == "val_f1":
+                index = np.argmax(val_f1s)
+            elif self.config.general_config.training.checkpoint_monitor == "val_loss":
+                index = np.argmin(val_losses)
+            elif self.config.general_config.training.checkpoint_monitor == "val_accuracy":
+                index = np.argmax(val_accuracies)
+            else:
+                raise ValueError(f"Invalid checkpoint monitor: {self.config.general_config.training.checkpoint_monitor}")
+            
+            kfold_train_losses.append(train_losses[index])
+            kfold_val_losses.append(val_losses[index])
+            kfold_train_accuracies.append(train_accuracies[index])
+            kfold_val_accuracies.append(val_accuracies[index])
+            kfold_train_f1s.append(train_f1s[index])
+            kfold_val_f1s.append(val_f1s[index])
 
         return (
             kfold_train_losses,

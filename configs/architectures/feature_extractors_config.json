@@ -9,12 +9,12 @@
         }
     },
     "resnet18": {
-        "output_size": 64,
+        "output_size": 32,
         "pretrained": true,
         "freeze": false,
         "unfreeze_after_n_epochs": 20,
         "unfreeze_last_n_blocks": 1,
-        "dropout_rate": 0.2,
+        "dropout_rate": 0.1,
         "hyperparameter_tuning": {
             "output_size": [32, 64, 128],
             "dropout_rate": [0.1, 0.2, 0.3],

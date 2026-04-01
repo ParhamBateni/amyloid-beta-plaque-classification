@@ -3,7 +3,8 @@
     "projection_head_sizes": [64],
     "projection_head_activation": "relu",
     "hyperparameter_tuning": {
-        "temperature": [0.1, 0.2],
-        "projection_head_sizes": [[64], [128]]
+        "temperature": [0.1, 0.2, 0.3],
+        "projection_head_sizes": [[64], [128]],
+        "projection_head_activation": ["relu", "tanh"]
     }
 }

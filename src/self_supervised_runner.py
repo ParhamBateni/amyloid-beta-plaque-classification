@@ -3,9 +3,9 @@ from models.config import Config
 from sklearn.model_selection import train_test_split, StratifiedKFold
 import os
 import torch
+import torch.nn as nn
 import pandas as pd
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.utilities.model_summary import summarize
 from models.data.lightning_data_module import (
     SelfSupervisedPlaqueLightningDataModule,
@@ -21,19 +21,12 @@ from torchvision import transforms as trf
 from models.data.plaque_dataset import PlaqueDataset, PlaqueDatasetAugmented
 from utils.logging_utils import FileTQDMProgressBar, setup_pytorch_lightning_logging
 
-from sklearn.metrics import confusion_matrix as sklearn_confusion_matrix
 from tqdm import tqdm
 import copy
-from utils import (
-    generate_classification_report_df,
-    aggregate_reports,
-    save_classification_report,
-    save_loss_and_accuracy,
-    plot_loss_and_accuracy,
-    plot_confusion_matrix,
-)
 from typing import Tuple
-
+from models.modules.architecture.feature_extractors.base_feature_extractor import BaseFeatureExtractor
+import numpy as np
+from utils.hyperparameter_tuning_utils import suggest_params_from_dict
 
 class SelfSupervisedRunner(BaseRunner):
     """
@@ -48,210 +41,8 @@ class SelfSupervisedRunner(BaseRunner):
     def __init__(self, config: Config, run_mode: str):
         super().__init__(config, run_mode)
 
-    def run_single_experiment(self):
-        """
-        Run a full self-supervised experiment:
-          - Self-supervised backbone pretraining on unlabeled data
-            (optional if checkpoint exists).
-          - Supervised classifier training on labeled data using the pretrained backbone.
-        """
-        # --- Split labeled data for supervised stage ---
-        train_labeled_data_df, test_labeled_data_df = train_test_split(
-            self.labeled_data_df,
-            test_size=self.config.general_config.training.test_size,
-            stratify=self.labeled_data_df["Label"],
-            random_state=self.config.general_config.system.random_seed,
-        )
-        train_labeled_data_df, val_labeled_data_df = train_test_split(
-            train_labeled_data_df,
-            test_size=self.config.general_config.training.val_size
-            / (1 - self.config.general_config.training.test_size),
-            stratify=train_labeled_data_df["Label"],
-            random_state=self.config.general_config.system.random_seed,
-        )
-
-        # Create pretraining trainer based on the config
-        pretraining_callbacks = []
-        enable_checkpointing = False
-        if not self.config.general_config.system.debug_mode:
-            enable_checkpointing = True
-            pretraining_callbacks.append(
-                ModelCheckpoint(
-                    dirpath=os.path.join(self.runs_folder, "pretraining_checkpoints"),
-                    filename="pretrained_feature_extractor_best_model",
-                    monitor="val_loss",
-                    mode="min",
-                    save_last=False,
-                )
-            )
-        # Log pretraining progress into the main log file as well
-        pretraining_callbacks.append(FileTQDMProgressBar(file_path=self.log_file_path))
-        setup_pytorch_lightning_logging(self.log_file_path)
-        pretraining_trainer = pl.Trainer(
-            accelerator="gpu" if torch.cuda.is_available() else "cpu",
-            devices=1,
-            max_epochs=self.config.self_supervised.self_supervised_config.pretraining.num_epochs,
-            enable_checkpointing=enable_checkpointing,
-            enable_progress_bar=True,
-            callbacks=pretraining_callbacks,
-            log_every_n_steps=1,
-            num_sanity_val_steps=0,
-            logger=False,
-        )
-
-        finetuning_callbacks = []
-        if not self.config.general_config.system.debug_mode:
-            finetuning_callbacks.append(
-                ModelCheckpoint(
-                    dirpath=os.path.join(self.runs_folder, "checkpoints"),
-                    filename="best_model",
-                    monitor=self.config.general_config.training.checkpoint_monitor,
-                    mode=(
-                        "max"
-                        if "f1"
-                        in self.config.general_config.training.checkpoint_monitor
-                        else "min"
-                    ),
-                    save_last=False,
-                )
-            )
-        finetuning_trainer = self._create_base_trainer(
-            callbacks=finetuning_callbacks,
-        )
-
-        (
-            train_losses,
-            val_losses,
-            train_accuracies,
-            val_accuracies,
-            train_f1s,
-            val_f1s,
-            test_labels,
-            test_preds,
-        ) = self._run_single_experiment(
-            train_labeled_data_df=train_labeled_data_df,
-            val_labeled_data_df=val_labeled_data_df,
-            test_labeled_data_df=test_labeled_data_df,
-            unlabeled_data_df=self.unlabeled_data_df,
-            pretraining_trainer=pretraining_trainer,
-            finetuning_trainer=finetuning_trainer,
-        )
-
-        # Save results
-        save_loss_and_accuracy(
-            train_losses,
-            val_losses,
-            train_f1s,
-            val_f1s,
-            train_accuracies,
-            val_accuracies,
-            folder_path=self.runs_folder,
-        )
-        plot_loss_and_accuracy(
-            train_losses,
-            val_losses,
-            train_f1s,
-            val_f1s,
-            train_accuracies,
-            val_accuracies,
-            folder_path=self.runs_folder,
-            save=True,
-        )
-        confusion_matrix = sklearn_confusion_matrix(
-            test_labels, test_preds, labels=list(self.config.name_to_label.values())
-        )
-        plot_confusion_matrix(
-            confusion_matrix,
-            self.config.name_to_label.keys(),
-            folder_path=self.runs_folder,
-            save=True,
-        )
-
-        classification_report_df = generate_classification_report_df(
-            test_labels, test_preds, self.config.name_to_label.keys()
-        )
-        self.log_file_writer.write("Classification report:")
-        self.log_file_writer.write(classification_report_df.to_string())
-        save_classification_report(
-            classification_report_df, folder_path=self.runs_folder
-        )
-
-    def cross_validate(self):
-        """Run cross-validation for self-supervised backbone pretraining + finetuning."""
-        (
-            kfold_train_losses,
-            kfold_val_losses,
-            kfold_train_accuracies,
-            kfold_val_accuracies,
-            kfold_train_f1s,
-            kfold_val_f1s,
-            kfold_test_labels,
-            kfold_test_preds,
-            best_trainer,
-        ) = self._cross_validate()
-        if (
-            best_trainer is not None
-            and not self.config.general_config.system.debug_mode
-        ):
-            best_trainer.save_checkpoint(
-                os.path.join(self.runs_folder, "best_model_cv.ckpt")
-            )
-
-        # Save aggregated train/val metrics across folds
-        save_loss_and_accuracy(
-            kfold_train_losses,
-            kfold_val_losses,
-            kfold_train_f1s,
-            kfold_val_f1s,
-            kfold_train_accuracies,
-            kfold_val_accuracies,
-            folder_path=self.runs_folder,
-            name="kfold_train_val_training_report.txt",
-        )
-
-        # Confusion matrices
-        confusion_matrices = []
-        for test_labels, test_preds in zip(kfold_test_labels, kfold_test_preds):
-            confusion_matrix = sklearn_confusion_matrix(
-                test_labels, test_preds, labels=list(self.config.name_to_label.values())
-            )
-            confusion_matrices.append(
-                pd.DataFrame(
-                    confusion_matrix,
-                    index=self.config.name_to_label.keys(),
-                    columns=self.config.name_to_label.keys(),
-                )
-            )
-        aggregated_confusion_matrix = aggregate_reports(
-            confusion_matrices, include_std=False
-        ).to_numpy()
-        plot_confusion_matrix(
-            aggregated_confusion_matrix,
-            self.config.name_to_label.keys(),
-            folder_path=self.runs_folder,
-            save=True,
-        )
-
-        # Classification reports
-        classification_reports_df = []
-        for test_labels, test_preds in zip(kfold_test_labels, kfold_test_preds):
-            classification_reports_df.append(
-                generate_classification_report_df(
-                    test_labels, test_preds, self.config.name_to_label.keys()
-                )
-            )
-        aggregated_classification_reports_df = aggregate_reports(
-            classification_reports_df
-        )
-        self.log_file_writer.write("Aggregated classification report:")
-        self.log_file_writer.write(aggregated_classification_reports_df.to_string())
-        save_classification_report(
-            aggregated_classification_reports_df, folder_path=self.runs_folder
-        )
-
     def _apply_extra_tuning_params(self, trial):
         """Apply SSL method config (simclr, vae) tuning params."""
-        from utils.hyperparameter_tuning_utils import suggest_params_from_dict
 
         method = self.config.self_supervised.self_supervised_config.pretraining_method
         method_cfg = getattr(
@@ -268,51 +59,28 @@ class SelfSupervisedRunner(BaseRunner):
                 param_name = k.replace(f"ssl_{method}.", "")
                 getattr(self.config.self_supervised, f"{method}_config")[param_name] = v
 
-    def _cross_validate(self):
+    def _cross_validate(self, labeled_kfold: StratifiedKFold):
         """Run cross-validation for self-supervised learning.
         If pretrain_once_for_cv is True, pretrains the backbone once on unlabeled data,
         then runs only the supervised (finetuning) stage per fold. Otherwise pretrains
         and finetunes in each fold.
         """
-        num_folds = round(1 / self.config.general_config.training.test_size)
-        kfold = StratifiedKFold(
-            n_splits=num_folds,
-            shuffle=True,
-            random_state=self.config.general_config.system.random_seed,
-        )
-        kfold_train_losses = []
-        kfold_val_losses = []
-        kfold_train_accuracies = []
-        kfold_val_accuracies = []
-        kfold_train_f1s = []
-        kfold_val_f1s = []
         kfold_test_labels = []
         kfold_test_preds = []
         best_val_loss = float("inf")
         best_trainer = None
 
-        # Log pretraining progress into the main log file for CV as well
-        pretraining_callbacks = [FileTQDMProgressBar(file_path=self.log_file_path)]
-        setup_pytorch_lightning_logging(self.log_file_path)
-        pretraining_trainer = pl.Trainer(
-            accelerator="gpu" if torch.cuda.is_available() else "cpu",
-            devices=1,
-            max_epochs=self.config.self_supervised.self_supervised_config.pretraining.num_epochs,
-            enable_checkpointing=False,
-            enable_progress_bar=True,
-            callbacks=pretraining_callbacks,
-            log_every_n_steps=1,
-            num_sanity_val_steps=0,
-            logger=False,
-        )
+        pretraining_trainer = self._create_base_trainer(
+                save_checkpoint=False, tensorboard_log_name=f"tensorboard_pretraining", max_epochs=self.config.self_supervised.self_supervised_config.pretraining.num_epochs)
+            
         pretrained_feature_extractor = self._run_pretraining(
             unlabeled_data_df=self.unlabeled_data_df,
             pretraining_trainer=pretraining_trainer,
         )
 
         for fold, (train_idx, test_idx) in tqdm(
-            enumerate(kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
-            total=num_folds,
+            enumerate(labeled_kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
+            total=labeled_kfold.n_splits,
             desc="Cross-validating",
             file=self.log_file_writer,
         ):
@@ -326,33 +94,9 @@ class SelfSupervisedRunner(BaseRunner):
                 random_state=self.config.general_config.system.random_seed,
             )
 
-            finetuning_callbacks = [
-                ModelCheckpoint(
-                    dirpath=os.path.join(self.runs_folder, "checkpoints"),
-                    filename="best_model",
-                    monitor=self.config.general_config.training.checkpoint_monitor,
-                    mode=(
-                        "max"
-                        if "f1"
-                        in self.config.general_config.training.checkpoint_monitor
-                        else "min"
-                    ),
-                    save_last=False,
-                )
-            ]
-            finetuning_trainer = self._create_base_trainer(
-                callbacks=finetuning_callbacks,
-            )
-            (
-                train_losses,
-                val_losses,
-                train_accuracies,
-                val_accuracies,
-                train_f1s,
-                val_f1s,
-                test_labels,
-                test_preds,
-            ) = self._run_supervised_finetuning(
+            finetuning_trainer = self._create_base_trainer(tensorboard_log_name=f"tensorboard_cv_{fold}")
+            
+            test_labels, test_preds = self._run_supervised_finetuning(
                 feature_extractor=pretrained_feature_extractor,
                 train_labeled_data_df=train_labeled_data_df,
                 val_labeled_data_df=val_labeled_data_df,
@@ -360,38 +104,30 @@ class SelfSupervisedRunner(BaseRunner):
                 finetuning_trainer=finetuning_trainer,
             )
 
+            val_losses = finetuning_trainer.callback_metrics["val_loss"]
+
             # Track the best model across all folds based on final val loss
             if val_losses[-1] < best_val_loss:
                 best_val_loss = val_losses[-1]
                 best_trainer = finetuning_trainer
 
-            kfold_train_losses.append(train_losses[-1])
-            kfold_val_losses.append(val_losses[-1])
-            kfold_train_accuracies.append(train_accuracies[-1])
-            kfold_val_accuracies.append(val_accuracies[-1])
-            kfold_train_f1s.append(train_f1s[-1])
-            kfold_val_f1s.append(val_f1s[-1])
             kfold_test_labels.append(test_labels)
             kfold_test_preds.append(test_preds)
 
-            if os.path.exists(
-                os.path.join(self.runs_folder, "checkpoints", "best_model.ckpt")
-            ):
-                os.remove(
-                    os.path.join(self.runs_folder, "checkpoints", "best_model.ckpt")
-                )
+            # if os.path.exists(
+            #     os.path.join(self.runs_folder, "checkpoints", "best_model.ckpt")
+            # ):
+            #     os.remove(
+            #         os.path.join(self.runs_folder, "checkpoints", "best_model.ckpt")
+            #     )
 
-        return (
-            kfold_train_losses,
-            kfold_val_losses,
-            kfold_train_accuracies,
-            kfold_val_accuracies,
-            kfold_train_f1s,
-            kfold_val_f1s,
-            kfold_test_labels,
-            kfold_test_preds,
-            best_trainer,
-        )
+        if not self.config.general_config.system.debug_mode:
+            checkpoint_path = os.path.join(
+                self.runs_folder, "checkpoints", "best_model_cv.ckpt"
+            )
+            best_trainer.save_checkpoint(checkpoint_path)
+
+        return kfold_test_labels, kfold_test_preds
 
     def _run_single_experiment(
         self,
@@ -621,7 +357,7 @@ class SelfSupervisedRunner(BaseRunner):
         self_supervised_config = self.config.self_supervised.self_supervised_config
         pretrained_model_path = os.path.join(
             self_supervised_config.pretraining.checkpoint_path,
-            f"pretrained_{self_supervised_config.pretraining_method}_{self_supervised_config.feature_extractor_name}.ckpt",
+            f"pretrained_{self_supervised_config.pretraining_method}_{self.config.general_config.architecture.feature_extractor_name}.ckpt",
         )
         if (
             self_supervised_config.pretraining.skip_if_checkpoint_exists
@@ -633,11 +369,11 @@ class SelfSupervisedRunner(BaseRunner):
             )
             feature_extractor_config = (
                 self.config.architectures.feature_extractors_config[
-                    self_supervised_config.feature_extractor_name
+                    self.config.general_config.architecture.feature_extractor_name
                 ].to_dict()
             )
             feature_extractor = BaseFeatureExtractor.create_feature_extractor(
-                feature_extractor_name=self_supervised_config.feature_extractor_name,
+                feature_extractor_name=self.config.general_config.architecture.feature_extractor_name,
                 input_dim=self.config.general_config.data.downscaled_image_size,
                 feature_extractor_config=feature_extractor_config,
             )
@@ -647,18 +383,25 @@ class SelfSupervisedRunner(BaseRunner):
 
         unlabeled_dataloader = self._load_unlabeled_dataloader(unlabeled_data_df)
         feature_extractor_config = self.config.architectures.feature_extractors_config[
-            self_supervised_config.feature_extractor_name
+            self.config.general_config.architecture.feature_extractor_name
         ].to_dict()
         original_freeze_feature_extractor = feature_extractor_config["freeze"]
         feature_extractor_config["freeze"] = False
         feature_extractor = BaseFeatureExtractor.create_feature_extractor(
-            feature_extractor_name=self_supervised_config.feature_extractor_name,
+            feature_extractor_name=self.config.general_config.architecture.feature_extractor_name,
             input_dim=self.config.general_config.data.downscaled_image_size,
             feature_extractor_config=feature_extractor_config,
         )
         kwargs = {}
         if self_supervised_config.pretraining_method == "vae":
-            kwargs = self.config.self_supervised.vae_config.to_dict()
+            kwargs["latent_dim"] = self.config.self_supervised.vae_config.latent_dim
+            kwargs["beta"] = self.config.self_supervised.vae_config.beta
+            kwargs["reconstruction_loss"] = self.config.self_supervised.vae_config.reconstruction_loss
+        elif self_supervised_config.pretraining_method == "simclr":
+            kwargs["temperature"] = self.config.self_supervised.simclr_config.temperature
+            kwargs["projection_head_sizes"] = self.config.self_supervised.simclr_config.projection_head_sizes
+            kwargs["projection_head_activation"] = self.config.self_supervised.simclr_config.projection_head_activation
+        
         ssl_module = BaseLightningSelfSupervisedModule.create_self_supervised_module(
             name=self_supervised_config.pretraining_method,
             feature_extractor=feature_extractor,
@@ -691,7 +434,6 @@ class SelfSupervisedRunner(BaseRunner):
         Train the classifier on top of the given feature extractor and evaluate on test set.
         Returns (train_losses, val_losses, train_accuracies, val_accuracies, test_labels, test_preds).
         """
-        self_supervised_config = self.config.self_supervised.self_supervised_config
         (train_labeled_dataloader, val_labeled_dataloader, test_labeled_dataloader) = (
             self._load_labeled_dataloaders(
                 train_labeled_data_df=train_labeled_data_df,
@@ -699,23 +441,29 @@ class SelfSupervisedRunner(BaseRunner):
                 test_labeled_data_df=test_labeled_data_df,
             )
         )
+        if self.config.general_config.system.debug_mode:
+            self.log_file_writer.write("Statistics of the dataloaders:")
+            self.log_file_writer.write(f"Train labeled dataloader size: {len(train_labeled_dataloader)}")
+            self.log_file_writer.write(
+                f"Val labeled dataloader size: {len(val_labeled_dataloader)}"
+            )
+            self.log_file_writer.write(
+                f"Test labeled dataloader size: {len(test_labeled_dataloader)}"
+            )
+
         feature_extractor = copy.deepcopy(feature_extractor)
-        classifier = BaseClassifier.create_classifier(
-            classifier_name=self_supervised_config.classifier_name,
-            input_size=feature_extractor.output_size
+        classifier = self._create_classifier_from_config(
+            feature_extractor.output_size
             + (
                 self.config.general_config.data.extra_feature_dim
                 if self.config.general_config.data.use_extra_features
                 else 0
-            ),
-            output_size=len(self.config.label_to_name),
-            classifier_config=self.config.architectures.classifiers_config[
-                self_supervised_config.classifier_name
-            ].to_dict(),
+            )
         )
-        criterion = torch.nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss()
         optimizer = self._create_base_optimizer()
         optimizer_kwargs = self._get_base_optimizer_kwargs()
+
         pl_module = LightningSupervisedModule(
             feature_extractor=feature_extractor,
             classifier=classifier,
@@ -729,31 +477,117 @@ class SelfSupervisedRunner(BaseRunner):
             threshold_steps=self.config.general_config.training.threshold_steps,
         )
         # Log the model architecture for the finetuning stage
-        self.log_file_writer.write("Finetuning model architecture:")
+        self.log_file_writer.write("Model architecture:")
         self.log_file_writer.write(str(summarize(pl_module)))
         self.log_file_writer.flush()
+
         data_module = SupervisedPlaqueLightningDataModule(
             train_labeled_plaque_dataloader=train_labeled_dataloader,
             val_labeled_plaque_dataloader=val_labeled_dataloader,
             test_labeled_plaque_dataloader=test_labeled_dataloader,
         )
         finetuning_trainer.fit(pl_module, datamodule=data_module)
+
+        checkpoint_path = os.path.join(self.runs_folder, "checkpoints", "best_model.ckpt")
         results = finetuning_trainer.test(
             pl_module,
             datamodule=data_module,
-            ckpt_path=os.path.join(self.runs_folder, "checkpoints", "best_model.ckpt"),
+            ckpt_path=checkpoint_path,
             verbose=False,
         )
         self.log_file_writer.write(
-            f"Self-supervised finetuning test results:\n{results[0] if results else {}}"
+            f"Test results:\n{results[0] if results else {}}"
         )
+
+        if self.config.general_config.system.debug_mode and os.path.exists(checkpoint_path):
+            os.remove(checkpoint_path)
+            os.removedirs(os.path.join(self.runs_folder, "checkpoints"))
+
+        return pl_module.test_labels, pl_module.test_preds
+
+    def _hyperparameter_tuning(self):
+        """Run cross-validation style tuning for self-supervised learning."""
+        cfg_train = self.config.general_config.training
+        num_folds = round(1 / cfg_train.hyperparemeter_tuning_val_size)
+        kfold = StratifiedKFold(
+            n_splits=num_folds,
+            shuffle=True,
+            random_state=self.config.general_config.system.random_seed,
+        )
+        kfold_train_losses = []
+        kfold_val_losses = []
+        kfold_train_accuracies = []
+        kfold_val_accuracies = []
+        kfold_train_f1s = []
+        kfold_val_f1s = []
+
+        pretraining_callbacks = [FileTQDMProgressBar(file_path=self.log_file_path)]
+        setup_pytorch_lightning_logging(self.log_file_path)
+        pretraining_trainer = pl.Trainer(
+            accelerator="gpu" if torch.cuda.is_available() else "cpu",
+            devices=1,
+            max_epochs=self.config.self_supervised.self_supervised_config.pretraining.num_epochs,
+            enable_checkpointing=False,
+            enable_progress_bar=True,
+            callbacks=pretraining_callbacks,
+            log_every_n_steps=1,
+            num_sanity_val_steps=0,
+            logger=False,
+        )
+        pretrained_feature_extractor = self._run_pretraining(
+            unlabeled_data_df=self.unlabeled_data_df,
+            pretraining_trainer=pretraining_trainer,
+        )
+
+        for fold, (train_idx, val_idx) in tqdm(
+            enumerate(kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
+            total=num_folds,
+            desc="Hyperparameter tuning",
+            file=self.log_file_writer,
+        ):
+            train_labeled_data_df = self.labeled_data_df.iloc[train_idx]
+            val_labeled_data_df = self.labeled_data_df.iloc[val_idx]
+            finetuning_trainer = self._create_base_trainer()
+            (
+                train_losses,
+                val_losses,
+                train_accuracies,
+                val_accuracies,
+                train_f1s,
+                val_f1s,
+                _,
+                _,
+            ) = self._run_supervised_finetuning(
+                feature_extractor=pretrained_feature_extractor,
+                train_labeled_data_df=train_labeled_data_df,
+                val_labeled_data_df=val_labeled_data_df,
+                test_labeled_data_df=pd.DataFrame(),
+                finetuning_trainer=finetuning_trainer,
+            )
+
+            # The following part ensures that the best model performance based on the checkpoint monitor is used for the hyperparameter tuning
+            index = -1
+            if self.config.general_config.training.checkpoint_monitor == "val_f1":
+                index = np.argmax(val_f1s)
+            elif self.config.general_config.training.checkpoint_monitor == "val_loss":
+                index = np.argmin(val_losses)
+            elif self.config.general_config.training.checkpoint_monitor == "val_accuracy":
+                index = np.argmax(val_accuracies)
+            else:
+                raise ValueError(f"Invalid checkpoint monitor: {self.config.general_config.training.checkpoint_monitor}")
+            
+            kfold_train_losses.append(train_losses[index])
+            kfold_val_losses.append(val_losses[index])
+            kfold_train_accuracies.append(train_accuracies[index])
+            kfold_val_accuracies.append(val_accuracies[index])
+            kfold_train_f1s.append(train_f1s[index])
+            kfold_val_f1s.append(val_f1s[index])
+
         return (
-            pl_module.train_losses,
-            pl_module.val_losses,
-            pl_module.train_accuracies,
-            pl_module.val_accuracies,
-            getattr(pl_module, "train_f1s", pl_module.train_accuracies),
-            getattr(pl_module, "val_f1s", pl_module.val_accuracies),
-            pl_module.test_labels,
-            pl_module.test_preds,
+            kfold_train_losses,
+            kfold_val_losses,
+            kfold_train_accuracies,
+            kfold_val_accuracies,
+            kfold_train_f1s,
+            kfold_val_f1s,
         )

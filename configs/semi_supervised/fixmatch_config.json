@@ -1,6 +1,6 @@
 {
     "pseudo_label_confidence_threshold": 0.95,
     "hyperparameter_tuning": {
-        "pseudo_label_confidence_threshold": [0.9, 0.95]
+        "pseudo_label_confidence_threshold": [0.85, 0.9, 0.95]
     }
 }

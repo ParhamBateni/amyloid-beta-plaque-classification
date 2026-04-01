@@ -24,7 +24,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--run_mode",
         type=str,
-        default="single",
+        default="hyperparameter_tuning",
         choices=["single", "cross_validate", "hyperparameter_tuning"],
         help="Run mode to use",
     )

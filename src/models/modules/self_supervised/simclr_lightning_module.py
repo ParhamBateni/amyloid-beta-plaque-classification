@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from typing import Any, Tuple, Callable, Iterable, Dict
 
 from .base_lightning_self_supervised_module import BaseLightningSelfSupervisedModule
-from models.modules.supervised.feature_extractors.base_feature_extractor import (
+from models.modules.architecture.feature_extractors.base_feature_extractor import (
     BaseFeatureExtractor,
 )
 
