@@ -1,16 +1,31 @@
+"""Abstract head that maps backbone features to class logits."""
+
 from abc import ABC, abstractmethod
+from typing import Any, Dict
+
 import torch
 import torch.nn as nn
-from typing import Any, Dict
 
 
 class BaseClassifier(ABC, nn.Module):
     """
-    Base class for all classifiers.
-    All classifiers should inherit from this class.
+    Shared interface for linear and MLP heads.
+
+    Subclasses implement :meth:`forward` and may override :meth:`to_dict` for logging.
     """
 
-    def __init__(self, input_size: int, output_size: int, **kwargs):
+    def __init__(self, input_size: int, output_size: int, **kwargs: Any) -> None:
+        """
+        Record input/output dimensions and stash extra constructor kwargs for logging.
+
+        Args:
+            input_size: Feature dimension from the backbone.
+            output_size: Number of classes (logits dimension).
+            **kwargs: Extra options stored in ``self.kwargs`` for serialization.
+
+        Returns:
+            None.
+        """
         super().__init__()
         self.input_size = input_size
         self.output_size = output_size
@@ -20,20 +35,26 @@ class BaseClassifier(ABC, nn.Module):
     @abstractmethod
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass producing logits.
+        1. Map each row of ``X`` through the classification head.
+        2. Return unnormalized class scores (logits).
 
         Args:
-            X: Features of shape (n_samples, input_dim)
+            X: Features of shape ``(batch, input_size)``.
+
         Returns:
-            Logits tensor of shape (n_samples, num_classes)
+            Logits of shape ``(batch, output_size)``.
         """
+        ...
 
     def save(self, path: str) -> None:
         """
-        Save the classifier to a file.
+        Serialize ``self`` with ``pickle`` to ``path``.
 
         Args:
-            path: Path to save the classifier
+            path: Destination file path.
+
+        Returns:
+            None.
         """
         import pickle
 
@@ -43,13 +64,13 @@ class BaseClassifier(ABC, nn.Module):
     @classmethod
     def load(cls, path: str) -> "BaseClassifier":
         """
-        Load a classifier from a file.
+        Load a classifier previously written by :meth:`save`.
 
         Args:
-            path: Path to load the classifier from
+            path: Path to the pickled file.
 
         Returns:
-            Loaded classifier
+            Unpickled instance (concrete subclass preserved).
         """
         import pickle
 
@@ -63,6 +84,23 @@ class BaseClassifier(ABC, nn.Module):
         output_size: int,
         classifier_config: Dict[str, Any],
     ) -> "BaseClassifier":
+        """
+        1. Build ``full_cfg`` from sizes plus ``classifier_config``.
+        2. Dispatch on ``classifier_name`` to the matching head class.
+        3. Return the constructed module.
+
+        Args:
+            classifier_name: ``linear`` or ``mlp``.
+            input_size: Backbone feature dimension.
+            output_size: Number of classes.
+            classifier_config: Passed into the concrete constructor together with sizes.
+
+        Returns:
+            Instantiated classifier.
+
+        Raises:
+            ValueError: If ``classifier_name`` is not registered.
+        """
         full_cfg = {
             "input_size": input_size,
             "output_size": output_size,
@@ -72,16 +110,18 @@ class BaseClassifier(ABC, nn.Module):
             from .linear_classifier import LinearClassifier
 
             return LinearClassifier(**full_cfg)
-        elif classifier_name == "mlp":
+        if classifier_name == "mlp":
             from .mlp_classifier import MLPClassifier
 
             return MLPClassifier(**full_cfg)
-        else:
-            raise ValueError(f"Classifier {classifier_name} not found")
+        raise ValueError(f"Classifier {classifier_name} not found")
 
     def to_dict(self) -> Dict[str, Any]:
         """
-        Convert the classifier to a dictionary.
+        Summarize sizes and kwargs for Lightning hyperparameter logging.
+
+        Returns:
+            Dict with ``input_size``, ``output_size``, and ``kwargs``.
         """
         return {
             "input_size": self.input_size,

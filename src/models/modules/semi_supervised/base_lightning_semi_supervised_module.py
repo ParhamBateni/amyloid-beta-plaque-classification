@@ -1,20 +1,29 @@
+"""Shared Lightning logic for semi-supervised models (labeled + unlabeled loaders)."""
+
+import math
+from abc import ABC, abstractmethod
+from typing import Any, Callable, Dict, Iterable, Optional, Tuple, Union
+
+import numpy as np
+import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import pytorch_lightning as pl
-from typing import Any, Callable, Iterable, Tuple, Union
-from abc import ABC, abstractmethod
-import math
+from sklearn.metrics import f1_score
+
+from models.modules.architecture.classifiers.base_classifier import BaseClassifier
 from models.modules.architecture.feature_extractors.base_feature_extractor import (
     BaseFeatureExtractor,
 )
-from models.modules.architecture.classifiers.base_classifier import BaseClassifier
-from sklearn.metrics import f1_score
-import numpy as np
 
 
 class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
-    """Abstract base class for semi-supervised learning Lightning modules."""
+    """
+    Supervised loss on labeled batches plus a ramped consistency term on unlabeled data.
+
+    Training batches are ``(labeled_batch, unlabeled_batch)`` from Lightning's
+    combined loader. Subclasses implement :meth:`_compute_consistency_loss`.
+    """
 
     def __init__(
         self,
@@ -23,7 +32,7 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         classifier: BaseClassifier,
         criterion: nn.Module,
         optimizer: Callable[[Iterable[torch.nn.Parameter]], torch.optim.Optimizer],
-        optimizer_kwargs: dict = {},
+        optimizer_kwargs: Optional[Dict[str, Any]] = None,
         use_extra_features: bool = False,
         use_thresholding: bool = False,
         threshold_min: float = 0.1,
@@ -33,8 +42,32 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         consistency_loss_type: str = "mse",
         ramp_up_epochs: int = 10,
         ramp_up_function: str = "linear",
-    ):
+    ) -> None:
+        """
+        1. Save hyperparameters for checkpointing and logs.
+        2. Wire backbone, head, supervised loss, optimizer, and thresholding options.
+        3. Initialize metric histories and per-epoch accumulators.
+
+        Args:
+            feature_extractor: CNN trunk.
+            classifier: Classification head.
+            criterion: Supervised loss ``(logits, labels)``.
+            optimizer: Optimizer factory.
+            optimizer_kwargs: Optimizer kwargs; ``None`` becomes ``{}``.
+            use_extra_features: Concatenate tabular extras when True.
+            use_thresholding: Tune per-class val thresholds when True.
+            threshold_min, threshold_max, threshold_steps: Threshold search grid.
+            consistency_lambda_max: Upper cap on consistency loss weight (after ramp-up).
+            consistency_loss_type: ``mse``, ``kl``, or ``cross_entropy`` for consistency.
+            ramp_up_epochs: Epochs over which consistency weight ramps from 0 toward max.
+            ramp_up_function: ``linear``, ``sigmoid``, or ``fixed`` ramp shape.
+
+        Returns:
+            None.
+        """
         super().__init__()
+        if optimizer_kwargs is None:
+            optimizer_kwargs = {}
         self.save_hyperparameters(
             {
                 "feature_extractor": feature_extractor.to_dict(),
@@ -96,8 +129,16 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         self, probs: np.ndarray, labels: np.ndarray
     ) -> Tuple[np.ndarray, float]:
         """
-        Search per-class confidence thresholds that maximize macro-F1
-        when using a thresholded decision rule.
+        1. For each class, pick the threshold on a linspace grid that maximizes binary F1.
+        2. Form multi-class predictions with :meth:`_apply_thresholds`.
+        3. Return thresholds and macro-F1 of those predictions.
+
+        Args:
+            probs: Softmax probabilities ``(N, C)``.
+            labels: Integer labels ``(N,)``.
+
+        Returns:
+            ``(class_thresholds, macro_f1)``.
         """
         num_classes = probs.shape[1]
         thresholds = np.linspace(
@@ -125,11 +166,16 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         self, probs: np.ndarray, class_thresholds: np.ndarray
     ) -> np.ndarray:
         """
-        Apply per-class thresholds to probability matrix to obtain final predictions.
-        For each sample:
-          - select classes where p_c >= tau_c
-          - if none, fall back to argmax
-          - if multiple, pick the one with highest probability among candidates
+        1. For each sample, take classes with ``p_c >= tau_c`` as candidates.
+        2. If no candidate, use global argmax.
+        3. If multiple candidates, choose the one with highest ``p_c``.
+
+        Args:
+            probs: Softmax matrix ``(N, C)``.
+            class_thresholds: Per-class thresholds ``(C,)``.
+
+        Returns:
+            Integer predictions ``(N,)``.
         """
         num_samples, num_classes = probs.shape
         preds = np.empty(num_samples, dtype=np.int64)
@@ -149,8 +195,17 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         use_thresholds: Union[bool, None] = None,
     ) -> torch.Tensor:
         """
-        Public prediction API for new data in semi-supervised models.
-        Uses the current forward method (which may be teacher/student depending on model).
+        1. Run :meth:`forward` under ``torch.no_grad()`` in eval mode.
+        2. Softmax logits to probabilities.
+        3. Apply :meth:`_apply_thresholds` when requested and thresholds exist; else argmax.
+
+        Args:
+            x_image: Image batch.
+            x_features: Optional tabular features if ``use_extra_features``.
+            use_thresholds: If ``None``, follow ``self.use_thresholding``.
+
+        Returns:
+            Class index tensor ``(B,)`` on the same device as logits.
         """
         if use_thresholds is None:
             use_thresholds = self.use_thresholding
@@ -177,19 +232,33 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
     @abstractmethod
     def _compute_consistency_loss(self, unlabeled_batch: Any) -> torch.Tensor:
         """
-        Compute consistency loss between labeled and unlabeled data.
+        Subclasses define how unlabeled augmentations are compared (e.g. student–teacher).
 
         Args:
-            unlabeled_batch: Batch of unlabeled data
+            unlabeled_batch: Unlabeled dataloader batch (structure depends on subclass).
 
         Returns:
-            Consistency loss tensor
+            Scalar consistency loss; zero if there is no unlabeled batch.
         """
+        ...
 
     def forward(
-        self, x_image: torch.Tensor, x_features: torch.Tensor = None
+        self,
+        x_image: torch.Tensor,
+        x_features: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Forward pass through feature extractor and classifier."""
+        """
+        1. Extract backbone features from ``x_image``.
+        2. Optionally concatenate ``x_features``.
+        3. Return classifier logits (student path for semi-supervised methods).
+
+        Args:
+            x_image: Images ``(B, C, H, W)``.
+            x_features: Optional ``(B, F)`` when ``use_extra_features``.
+
+        Returns:
+            Logits ``(B, num_classes)``.
+        """
         x = self.feature_extractor(x_image)
         if (
             self.use_extra_features
@@ -203,7 +272,17 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
     def _step_common(
         self, batch: Any
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Common step logic for supervised data."""
+        """
+        1. Forward labeled images (and optional extras) through :meth:`forward`.
+        2. Compute supervised loss vs. labels.
+        3. Take argmax predictions for metrics.
+
+        Args:
+            batch: Labeled ``PlaqueDataset`` batch.
+
+        Returns:
+            ``(labels, preds, loss, outputs)``.
+        """
         (
             _image_paths,
             normalized_transformed_image_tensors,
@@ -219,7 +298,18 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         return labels, preds, loss, outputs
 
     def _get_ramp_up_weight(self, current_epoch: int) -> float:
-        """Get ramp-up weight for consistency loss."""
+        """
+        Map the current epoch to a multiplier in ``[0, 1]`` before ``ramp_up_epochs`` saturate at 1.
+
+        Args:
+            current_epoch: Lightning epoch index.
+
+        Returns:
+            Ramp multiplier; shape depends on ``ramp_up_function`` (linear, sigmoid, or fixed 1.0).
+
+        Raises:
+            ValueError: If ``ramp_up_function`` is unknown.
+        """
         if current_epoch >= self.ramp_up_epochs:
             return 1.0
 
@@ -235,8 +325,21 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
     def _get_consistency_loss(
         self, outputs: torch.Tensor, targets: torch.Tensor, reduce: bool = True
     ) -> torch.Tensor:
-        """Get consistency loss between predicted and target labels. Note that inputs are not probabilities, but logits."""
+        """
+        1. Convert ``outputs`` to log-probabilities and ``targets`` to probabilities.
+        2. Apply MSE on log-prob vs. prob, KL divergence, or cross-entropy, per ``consistency_loss_type``.
 
+        Args:
+            outputs: Student (or primary) logits ``(B, C)``.
+            targets: Teacher or second-view logits ``(B, C)`` (softmax applied inside).
+            reduce: If True, use mean/batchmean reduction; else elementwise where supported.
+
+        Returns:
+            Scalar consistency loss tensor.
+
+        Raises:
+            ValueError: Unknown ``consistency_loss_type``.
+        """
         output_log_probs = F.log_softmax(outputs, dim=1)
         target_probs = F.softmax(targets, dim=1)
         if self.consistency_loss_type == "mse":
@@ -259,7 +362,14 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
             )
 
     def on_train_epoch_start(self):
-        """Log ramp-up weight at start of each epoch."""
+        """
+        1. Optionally unfreeze backbone layers by epoch.
+        2. Set ``consistency_lambda`` from ramp weight × ``consistency_lambda_max``.
+        3. Log ramp and lambda to Lightning.
+
+        Returns:
+            None.
+        """
         if hasattr(self.feature_extractor, "check_for_unfreezing"):
             self.feature_extractor.check_for_unfreezing(self.current_epoch)
         ramp_up_weight = self._get_ramp_up_weight(self.current_epoch)
@@ -268,7 +378,18 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         self.log("consistency_lambda", self.consistency_lambda, prog_bar=True)
 
     def training_step(self, batch: Any, batch_idx: int):
-        """Training step for semi-supervised learning."""
+        """
+        1. Split ``batch`` into labeled and unlabeled tuples from Lightning's combined loader.
+        2. Supervised loss on labeled data; consistency loss on unlabeled via subclass.
+        3. Return total loss ``supervised + λ · consistency`` and log both components.
+
+        Args:
+            batch: ``(labeled_batch, unlabeled_batch)``.
+            batch_idx: Batch index (unused).
+
+        Returns:
+            Scalar total loss for backprop.
+        """
         # Lightning gives you a tuple (batch_from_loader0, batch_from_loader1)
         labeled_batch, unlabeled_batch = batch
 
@@ -306,7 +427,17 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         return total_loss
 
     def validation_step(self, batch: Any, batch_idx: int):
-        """Validation step using only labeled data."""
+        """
+        1. Run :meth:`_step_common` on labeled validation data.
+        2. Accumulate loss, labels, preds, and softmax probs for epoch-end metrics.
+
+        Args:
+            batch: Labeled validation batch.
+            batch_idx: Batch index (unused).
+
+        Returns:
+            None.
+        """
         labels, preds, loss, outputs = self._step_common(batch)
         self._val_loss_sum += loss.item()
         self._val_labels.extend(labels.cpu().tolist())
@@ -315,7 +446,14 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         self._val_probs.append(probs.detach().cpu())
 
     def on_train_epoch_end(self):
-        """Log training metrics at end of epoch."""
+        """
+        1. Aggregate train loss, accuracy, macro-F1 from accumulated batches.
+        2. Append histories and log metrics.
+        3. Reset train accumulators.
+
+        Returns:
+            None.
+        """
         if len(self._train_labels) > 0:
             avg_loss = self._train_loss_sum / max(1, self.trainer.num_training_batches)
             acc = (
@@ -343,7 +481,14 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         self._train_preds = []
 
     def on_validation_epoch_end(self):
-        """Log validation metrics at end of epoch."""
+        """
+        1. Average val loss and concatenate stored probabilities.
+        2. Either tune thresholds and log thresholded metrics or use argmax metrics.
+        3. Reset validation accumulators.
+
+        Returns:
+            None.
+        """
         if len(self._val_labels) > 0:
             avg_val_loss = self._val_loss_sum / max(1, self.trainer.num_val_batches[0])
             probs_val = (
@@ -398,7 +543,17 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         self._val_probs = []
 
     def test_step(self, batch: Any, batch_idx: int):
-        """Test step using only labeled data."""
+        """
+        1. Supervised loss on the test batch.
+        2. Store labels and :meth:`predict` outputs for :meth:`on_test_epoch_end`.
+
+        Args:
+            batch: Labeled test batch.
+            batch_idx: Batch index (unused).
+
+        Returns:
+            None.
+        """
         labels, _, loss, _ = self._step_common(batch)
         self._test_loss_sum += float(loss.item())
         self.test_labels.extend(labels.cpu().tolist())
@@ -417,7 +572,14 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         self.test_preds.extend(batch_preds.cpu().tolist())
 
     def on_test_epoch_end(self):
-        """Log test metrics at end of epoch."""
+        """
+        1. Average test loss over stored batches.
+        2. Compute accuracy and macro-F1 from preds/labels.
+        3. Log ``test_loss``, ``test_acc``, ``test_f1``.
+
+        Returns:
+            None.
+        """
         avg_loss = self._test_loss_sum / max(1, len(self.test_labels))
         labels_test = np.array(self.test_labels)
         preds = np.array(self.test_preds)
@@ -432,28 +594,46 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         self.log("test_f1", test_f1, prog_bar=True)
 
     def configure_optimizers(self):
-        """Configure optimizer."""
+        """
+        Instantiate the optimizer over all ``nn.Module`` parameters.
+
+        Returns:
+            Optimizer instance expected by Lightning.
+        """
         return self.optimizer(self.parameters(), **self.optimizer_kwargs)
 
     @classmethod
     def create_semi_supervised_module(
         cls, name: str, *args, **kwargs
     ) -> "BaseLightningSemiSupervisedModule":
-        """Create semi-supervised module from name."""
+        """
+        1. Match ``name`` to a concrete Lightning module class.
+        2. Forward ``*args`` and ``**kwargs`` to that constructor.
+
+        Args:
+            name: ``pi_model``, ``fixmatch``, or ``mean_teacher``.
+            *args: Positional args for the concrete module.
+            **kwargs: Keyword args for the concrete module.
+
+        Returns:
+            Instantiated semi-supervised module.
+
+        Raises:
+            ValueError: Unknown ``name``.
+        """
         if name == "pi_model":
             from .pi_model_lightning_module import PiModelLightningModule
 
             return PiModelLightningModule(*args, **kwargs)
 
-        elif name == "fixmatch":
+        if name == "fixmatch":
             from .fixmatch_lightning_module import FixMatchLightningModule
 
             return FixMatchLightningModule(*args, **kwargs)
 
-        elif name == "mean_teacher":
+        if name == "mean_teacher":
             from .mean_teacher_lightning_module import MeanTeacherLightningModule
 
             return MeanTeacherLightningModule(*args, **kwargs)
 
-        else:
-            raise ValueError(f"Unknown semi-supervised module name: {name}")
+        raise ValueError(f"Unknown semi-supervised module name: {name}")

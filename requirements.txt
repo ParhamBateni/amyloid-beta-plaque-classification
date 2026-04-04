@@ -30,4 +30,4 @@ timm
 optuna
 
 # Development
-black
+ruff

@@ -1,13 +1,17 @@
+from typing import Any, Dict
+
 import torch
 import torch.nn as nn
 from torchvision import models
+
 from .base_feature_extractor import BaseFeatureExtractor
-from typing import Any, Dict
 
 
 class ResNetFeatureExtractor(BaseFeatureExtractor):
     """
-    ResNet feature extractor using pretrained ResNet models.
+    Torchvision ResNet trunk (ImageNet weights optional) + linear head to ``output_size``.
+
+    Drops the original ``fc``; applies ``AdaptiveAvgPool`` output flattened then ``linear``.
     """
 
     def __init__(
@@ -21,7 +25,25 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
         pretrained: bool = True,
         dropout_rate: float = 0.2,
         **kwargs,
-    ):
+    ) -> None:
+        """
+        1. Instantiate the torchvision ResNet and strip the original ``fc``.
+        2. Wrap pre-``fc`` layers plus flatten as ``self.feature_extractor``.
+        3. Add a linear head (ReLU + dropout) to ``output_size``.
+        4. Call :meth:`BaseFeatureExtractor.post_init`.
+
+        Args:
+            input_dim: Passed to parent (spatial metadata).
+            output_size: Target embedding dimension.
+            freeze, unfreeze_last_n_blocks, unfreeze_after_n_epochs: See base class.
+            model_name: Torchvision function name, e.g. ``resnet18``.
+            pretrained: Whether to load ImageNet weights.
+            dropout_rate: Dropout after ReLU in the linear head.
+            **kwargs: Ignored.
+
+        Returns:
+            None.
+        """
         super().__init__(
             input_dim,
             output_size,
@@ -52,13 +74,14 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
 
     def forward(self, x_image: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the feature extractor.
+        1. Extract spatial features with the ResNet trunk and flatten.
+        2. Project through ``self.linear`` to ``output_size``.
 
         Args:
-            x_image: Image tensor of shape (batch_size, channels, height, width)
+            x_image: ``(B, 3, H, W)``; typically ``224×224`` for torchvision ResNets.
 
         Returns:
-            Combined features tensor
+            ``(B, output_size)`` after trunk + linear head.
         """
         image_features = self.feature_extractor(x_image)
         image_features = image_features.view(image_features.size(0), -1)  # Flatten
@@ -66,6 +89,12 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
         return image_features
 
     def to_dict(self) -> Dict[str, Any]:
+        """
+        Extend the parent dict with ResNet-specific hyperparameters.
+
+        Returns:
+            Parent dict plus ``model_name``, ``pretrained``, and ``dropout_rate``.
+        """
         base_dict = super().to_dict()
         base_dict["model_name"] = self.model_name
         base_dict["pretrained"] = self.pretrained

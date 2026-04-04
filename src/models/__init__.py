@@ -1,1 +1,1 @@
-# Package marker for models
+"""Model configuration, runners, and Lightning modules."""

@@ -1,30 +1,62 @@
-import os
+"""Nested dict-like config loaded from JSON with dynamic attribute access."""
+
 import json
+import os
+from datetime import datetime
+from typing import Any, Dict
+
 import pandas as pd
 import torch
-from datetime import datetime
 
 
 class Config:
-    def __init__(self, config: dict):
+    """Recursive wrapper around nested dicts from JSON; supports attr and ``[key]`` access."""
+
+    def __init__(self, config: Dict[str, Any]) -> None:
+        """
+        1. For each key in ``config``, wrap dict values as nested ``Config`` instances.
+        2. Assign the resulting mapping to ``self.config``.
+
+        Args:
+            config: Top-level mapping (typically from ``json.load``).
+
+        Returns:
+            None.
+        """
         self.config = {
             k: Config(v) if isinstance(v, dict) else v for k, v in config.items()
         }
 
-    def __setattr__(self, name: str, value: any):
+    def __setattr__(self, name: str, value: Any) -> None:
+        """
+        1. If ``name == "config"``, assign on the object dict (bootstrap).
+        2. Otherwise write ``value`` into ``self.config[name]``.
+
+        Args:
+            name: Attribute / key name.
+            value: Value to store (dict values are not auto-wrapped here).
+
+        Returns:
+            None.
+        """
         if name == "config":
             super().__setattr__(name, value)
         else:
             self.config[name] = value
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Any:
         """
-        Fallback attribute access for config fields.
+        Resolve ``name`` from ``self.config``.
 
-        Important: avoid touching self.config when it's not yet initialized
-        and never try to resolve Python magic attributes (dunder names),
-        otherwise things like copy.deepcopy() that probe for __getstate__ /
-        __setstate__ can recurse indefinitely.
+        Args:
+            name: Requested attribute (must exist in ``self.config``).
+
+        Returns:
+            Stored value (possibly a nested ``Config``).
+
+        Raises:
+            AttributeError: For dunder names, missing ``config``, or unknown keys
+                (avoids infinite recursion with ``copy.deepcopy``).
         """
         # Ignore Python's special/magic attributes – signal "not found" quickly
         if name.startswith("__") and name.endswith("__"):
@@ -37,7 +69,17 @@ class Config:
 
         return cfg[name]
 
-    def _indented_str(self, indent: int = 1, keep_cv_grid_search: bool = False):
+    def _indented_str(self, indent: int = 1, keep_cv_grid_search: bool = False) -> str:
+        """
+        Pretty-print the tree for ``config.txt`` / ``__str__``.
+
+        Args:
+            indent: Tab depth for nesting.
+            keep_cv_grid_search: If False, omit ``cv_grid_search`` keys from output.
+
+        Returns:
+            Multi-line brace-wrapped string representation.
+        """
         return (
             "{\n"
             + "\t" * indent
@@ -56,24 +98,53 @@ class Config:
             + "}"
         )
 
-    def __str__(self):
+    def __str__(self) -> str:
+        """
+        Returns:
+            Pretty string from :meth:`_indented_str` with ``cv_grid_search`` omitted.
+        """
         return self._indented_str(keep_cv_grid_search=False)
 
-    def __getitem__(self, key: str):
+    def __getitem__(self, key: str) -> Any:
+        """
+        Args:
+            key: Top-level key in ``self.config``.
+
+        Returns:
+            Stored value (possibly nested ``Config``).
+        """
         return self.config[key]
 
-    def __setitem__(self, key: str, value: any):
+    def __setitem__(self, key: str, value: Any) -> None:
+        """
+        Args:
+            key: Key to set in ``self.config``.
+            value: Value to assign.
+
+        Returns:
+            None.
+        """
         self.config[key] = value
 
-    def __delattr__(self, name: str):
+    def __delattr__(self, name: str) -> None:
+        """
+        Args:
+            name: Key to delete from ``self.config`` if it exists.
+
+        Returns:
+            None.
+        """
         try:
             del self.config[name]
         except Exception:
             pass
 
-    def to_dict(self):
+    def to_dict(self) -> Dict[str, Any]:
         """
-        Recursively convert Config objects to dictionaries.
+        Recursively convert nested ``Config`` nodes to plain ``dict``.
+
+        Returns:
+            JSON-serializable nested dictionary.
         """
         result = {}
         for k, v in self.config.items():
@@ -83,22 +154,61 @@ class Config:
                 result[k] = v
         return result
 
-    def save_config(self, folder_path: str, keep_cv_grid_search: bool = False):
-        # Save the args to a json file
+    def save_config(self, folder_path: str, keep_cv_grid_search: bool = False) -> None:
+        """
+        1. Render this tree via :meth:`_indented_str`.
+        2. Write ``config.txt`` under ``folder_path``.
+
+        Args:
+            folder_path: Run or trial directory.
+            keep_cv_grid_search: Passed through to :meth:`_indented_str`.
+
+        Returns:
+            None.
+        """
         with open(
             os.path.join(folder_path, "config.txt"),
             "w",
         ) as f:
-            # Write the config in a more readable, multi-line format
             config_str = self._indented_str(keep_cv_grid_search=keep_cv_grid_search)
             f.write(config_str)
 
     @staticmethod
     def load_config(config_dir: str, train_mode: str = "") -> "Config":
+        """
+        1. Recursively merge JSON files under ``config_dir`` into a nested ``Config``.
+        2. Attach ``label_to_name``, ``name_to_label``, ``run_id``, and ``system.device``.
+        3. Drop unused training-mode sections so invalid keys fail fast.
+
+        Args:
+            config_dir: Root such as ``configs/`` (nested folders allowed).
+            train_mode: ``supervised``, ``semi_supervised``, or ``self_supervised``;
+                drops unused top-level sections to avoid accidental access.
+
+        Returns:
+            Fully built :class:`Config` with ``label_to_name``, ``name_to_label``,
+            ``run_id``, ``system.device``, and mode-specific sections only.
+
+        Raises:
+            FileNotFoundError: If ``config_dir`` does not exist.
+        """
+
         def load_config_directory(config_dir: str) -> Config:
-            """Load all configuration files."""
+            """
+            1. List ``config_dir`` entries; load each ``.json`` into a ``Config``.
+            2. Recurse into subdirectories and nest their merged dicts.
+            3. Return a ``Config`` wrapping the collected mapping.
+
+            Args:
+                config_dir: Directory to scan.
+
+            Returns:
+                Nested ``Config`` for that subtree.
+
+            Raises:
+                FileNotFoundError: If ``config_dir`` is missing.
+            """
             configs = {}
-            # Load mode-specific configs
             if os.path.exists(config_dir):
                 for file in os.listdir(config_dir):
                     file_name = file.split(".")[0]
@@ -119,10 +229,9 @@ class Config:
 
         config = load_config_directory(config_dir)
 
-        # Global variables for label mappings (these don't need to be passed as args)
+        # Class names from CSV (under data folder); sorted for stable ordering
         label_to_name = {}
         name_to_label = {}
-        # Load label names
         for i, r in pd.read_csv(
             f"{config.general_config.data.data_folder}/label_names.csv"
         ).iterrows():
@@ -132,7 +241,6 @@ class Config:
         label_to_name = {k: label_to_name[k] for k in sorted(label_to_name.keys())}
         name_to_label = {k: name_to_label[k] for k in sorted(name_to_label.keys())}
 
-        # Add label mappings to args
         config.label_to_name = label_to_name
         config.name_to_label = name_to_label
 
@@ -143,7 +251,7 @@ class Config:
         config.general_config.system.device = (
             "cuda" if torch.cuda.is_available() else "cpu"
         )
-        # Filter the config based on the train mode
+        # Drop unused mode sections so typos fail fast
         if train_mode == "supervised":
             del config.self_supervised
             del config.semi_supervised

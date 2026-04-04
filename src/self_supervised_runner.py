@@ -1,32 +1,39 @@
-from models.base_runner import BaseRunner
-from models.config import Config
-from sklearn.model_selection import train_test_split, StratifiedKFold
+"""Self-supervised pretraining on unlabeled data, then supervised finetuning."""
+
+import copy
 import os
-import torch
-import torch.nn as nn
+from typing import Tuple
+
+import numpy as np
+import optuna
 import pandas as pd
 import pytorch_lightning as pl
+import torch
+import torch.nn as nn
 from pytorch_lightning.utilities.model_summary import summarize
+from sklearn.model_selection import StratifiedKFold, train_test_split
+from torchvision import transforms as trf
+from tqdm import tqdm
+
+from models.base_runner import BaseRunner
+from models.config import Config
 from models.data.lightning_data_module import (
     SelfSupervisedPlaqueLightningDataModule,
     SupervisedPlaqueLightningDataModule,
 )
-from models.modules.supervised.lightning_supervised_module import (
-    LightningSupervisedModule,
+from models.data.plaque_dataset import PlaqueDataset, PlaqueDatasetAugmented
+from models.modules.architecture.feature_extractors.base_feature_extractor import (
+    BaseFeatureExtractor,
 )
 from models.modules.self_supervised.base_lightning_self_supervised_module import (
     BaseLightningSelfSupervisedModule,
 )
-from torchvision import transforms as trf
-from models.data.plaque_dataset import PlaqueDataset, PlaqueDatasetAugmented
+from models.modules.supervised.lightning_supervised_module import (
+    LightningSupervisedModule,
+)
+from utils.hyperparameter_tuning_utils import suggest_params_from_dict
 from utils.logging_utils import FileTQDMProgressBar, setup_pytorch_lightning_logging
 
-from tqdm import tqdm
-import copy
-from typing import Tuple
-from models.modules.architecture.feature_extractors.base_feature_extractor import BaseFeatureExtractor
-import numpy as np
-from utils.hyperparameter_tuning_utils import suggest_params_from_dict
 
 class SelfSupervisedRunner(BaseRunner):
     """
@@ -38,32 +45,68 @@ class SelfSupervisedRunner(BaseRunner):
       2) Train a classifier (e.g. MLP) on top of the pretrained backbone using labeled data.
     """
 
-    def __init__(self, config: Config, run_mode: str):
+    def __init__(self, config: Config, run_mode: str) -> None:
         super().__init__(config, run_mode)
 
-    def _apply_extra_tuning_params(self, trial):
-        """Apply SSL method config (simclr, vae) tuning params."""
+    def load_model_from_checkpoint(self, checkpoint_path: str, device: str = "cpu") -> None:
+        """Load pretrained backbone + classifier (not implemented)."""
+        pass
 
-        method = self.config.self_supervised.self_supervised_config.pretraining_method
-        method_cfg = getattr(
-            self.config.self_supervised,
-            f"{method}_config",
-            None,
+    def _type(self) -> str:
+        """Return model type string used in run folder naming."""
+        return "self_supervised"
+
+    def _run_single_experiment(
+        self,
+        train_labeled_data_df: pd.DataFrame,
+        val_labeled_data_df: pd.DataFrame,
+        test_labeled_data_df: pd.DataFrame,
+        unlabeled_data_df: pd.DataFrame,
+        pretraining_trainer: pl.Trainer,
+        finetuning_trainer: pl.Trainer,
+        pretrained_feature_extractor=None,
+    ):
+        """
+        Pretrain (optional) on unlabeled data, then supervised finetune on labeled splits.
+
+        Args:
+            train_labeled_data_df, val_labeled_data_df, test_labeled_data_df: Labeled splits.
+            unlabeled_data_df: Pool for self-supervised pretraining when no pretrained backbone.
+            pretraining_trainer: Trainer for the SSL phase (epochs from SSL config).
+            finetuning_trainer: Trainer for the supervised head phase.
+            pretrained_feature_extractor: If provided, skip :meth:`_run_pretraining`.
+
+        Returns:
+            Same as :meth:`_run_supervised_finetuning`: ``(test_labels, test_preds)``.
+        """
+        if pretrained_feature_extractor is not None:
+            feature_extractor = pretrained_feature_extractor
+        else:
+            feature_extractor = self._run_pretraining(
+                unlabeled_data_df=unlabeled_data_df,
+                pretraining_trainer=pretraining_trainer,
+            )
+        return self._run_supervised_finetuning(
+            feature_extractor=feature_extractor,
+            train_labeled_data_df=train_labeled_data_df,
+            val_labeled_data_df=val_labeled_data_df,
+            test_labeled_data_df=test_labeled_data_df,
+            finetuning_trainer=finetuning_trainer,
         )
-        if method_cfg is not None and hasattr(method_cfg, "hyperparameter_tuning"):
-            ht = method_cfg.hyperparameter_tuning
-            ht_dict = ht.to_dict() if hasattr(ht, "to_dict") else dict(ht)
-            for k, v in suggest_params_from_dict(
-                trial, ht_dict, f"ssl_{method}"
-            ).items():
-                param_name = k.replace(f"ssl_{method}.", "")
-                getattr(self.config.self_supervised, f"{method}_config")[param_name] = v
 
     def _cross_validate(self, labeled_kfold: StratifiedKFold):
-        """Run cross-validation for self-supervised learning.
-        If pretrain_once_for_cv is True, pretrains the backbone once on unlabeled data,
-        then runs only the supervised (finetuning) stage per fold. Otherwise pretrains
-        and finetunes in each fold.
+        """
+        Pretrain the backbone **once** on all unlabeled data, then CV only over finetuning.
+
+        Args:
+            labeled_kfold: Stratified splitter on labeled rows.
+
+        Returns:
+            ``(kfold_test_labels, kfold_test_preds)``.
+
+        Note:
+            The same ``pretrained_feature_extractor`` instance is reused each fold; only
+            labeled train/val/test slices change. Best fold checkpoint saved when not in debug.
         """
         kfold_test_labels = []
         kfold_test_preds = []
@@ -71,15 +114,20 @@ class SelfSupervisedRunner(BaseRunner):
         best_trainer = None
 
         pretraining_trainer = self._create_base_trainer(
-                save_checkpoint=False, tensorboard_log_name=f"tensorboard_pretraining", max_epochs=self.config.self_supervised.self_supervised_config.pretraining.num_epochs)
-            
+            save_checkpoint=False,
+            tensorboard_log_name="tensorboard_pretraining",
+            max_epochs=self.config.self_supervised.self_supervised_config.pretraining.num_epochs,
+        )
+
         pretrained_feature_extractor = self._run_pretraining(
             unlabeled_data_df=self.unlabeled_data_df,
             pretraining_trainer=pretraining_trainer,
         )
 
         for fold, (train_idx, test_idx) in tqdm(
-            enumerate(labeled_kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
+            enumerate(
+                labeled_kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])
+            ),
             total=labeled_kfold.n_splits,
             desc="Cross-validating",
             file=self.log_file_writer,
@@ -94,8 +142,10 @@ class SelfSupervisedRunner(BaseRunner):
                 random_state=self.config.general_config.system.random_seed,
             )
 
-            finetuning_trainer = self._create_base_trainer(tensorboard_log_name=f"tensorboard_cv_{fold}")
-            
+            finetuning_trainer = self._create_base_trainer(
+                tensorboard_log_name=f"tensorboard_cv_{fold}"
+            )
+
             test_labels, test_preds = self._run_supervised_finetuning(
                 feature_extractor=pretrained_feature_extractor,
                 train_labeled_data_df=train_labeled_data_df,
@@ -114,12 +164,6 @@ class SelfSupervisedRunner(BaseRunner):
             kfold_test_labels.append(test_labels)
             kfold_test_preds.append(test_preds)
 
-            # if os.path.exists(
-            #     os.path.join(self.runs_folder, "checkpoints", "best_model.ckpt")
-            # ):
-            #     os.remove(
-            #         os.path.join(self.runs_folder, "checkpoints", "best_model.ckpt")
-            #     )
 
         if not self.config.general_config.system.debug_mode:
             checkpoint_path = os.path.join(
@@ -129,105 +173,107 @@ class SelfSupervisedRunner(BaseRunner):
 
         return kfold_test_labels, kfold_test_preds
 
-    def _run_single_experiment(
+    def _hyperparameter_tuning(self, labeled_kfold: StratifiedKFold):
+        """
+        Single shared pretraining pass, then k finetuning folds for Optuna metrics.
+
+        Args:
+            labeled_kfold: Same k-fold definition as outer CV.
+
+        Returns:
+            ``(kfold_val_losses, kfold_val_accuracies, kfold_val_f1s)`` — one scalar per
+            fold at the epoch picked by ``checkpoint_monitor``.
+
+        Note:
+            Test loader is empty during HPO; metrics come from ``finetuning_trainer.callback_metrics``.
+        """
+        kfold_val_losses = []
+        kfold_val_accuracies = []
+        kfold_val_f1s = []
+
+        pretraining_trainer = self._create_base_trainer(
+            save_checkpoint=False,
+            max_epochs=self.config.self_supervised.self_supervised_config.pretraining.num_epochs,
+        )
+        pretrained_feature_extractor = self._run_pretraining(
+            unlabeled_data_df=self.unlabeled_data_df,
+            pretraining_trainer=pretraining_trainer,
+        )
+
+        for fold, (train_idx, _test_idx) in tqdm(
+            enumerate(labeled_kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
+            total=labeled_kfold.n_splits,
+            desc="Hyperparameter tuning",
+            file=self.log_file_writer,
+        ):
+            train_labeled_data_df = self.labeled_data_df.iloc[train_idx]
+            train_labeled_data_df, val_labeled_data_df = train_test_split(
+                train_labeled_data_df,
+                test_size=self.config.general_config.training.val_size
+                / (1 - self.config.general_config.training.test_size),
+                stratify=train_labeled_data_df["Label"],
+                random_state=self.config.general_config.system.random_seed,
+            )
+            finetuning_trainer = self._create_base_trainer()
+            self._run_supervised_finetuning(
+                feature_extractor=pretrained_feature_extractor,
+                train_labeled_data_df=train_labeled_data_df,
+                val_labeled_data_df=val_labeled_data_df,
+                test_labeled_data_df=pd.DataFrame(),
+                finetuning_trainer=finetuning_trainer,
+            )
+            val_f1s = finetuning_trainer.callback_metrics["val_f1"]
+            val_losses = finetuning_trainer.callback_metrics["val_loss"]
+            val_accuracies = finetuning_trainer.callback_metrics["val_accuracy"]
+            
+            # The following part ensures that the best model performance based on the checkpoint monitor is used for the hyperparameter tuning
+            index = -1
+            if self.config.general_config.training.checkpoint_monitor == "val_f1":
+                index = np.argmax(val_f1s)
+            elif self.config.general_config.training.checkpoint_monitor == "val_loss":
+                index = np.argmin(val_losses)
+            elif (
+                self.config.general_config.training.checkpoint_monitor == "val_accuracy"
+            ):
+                index = np.argmax(val_accuracies)
+            else:
+                raise ValueError(
+                    f"Invalid checkpoint monitor: {self.config.general_config.training.checkpoint_monitor}"
+                )
+
+            kfold_val_losses.append(val_losses[index])
+            kfold_val_accuracies.append(val_accuracies[index])
+            kfold_val_f1s.append(val_f1s[index])
+
+        return (
+            kfold_val_losses,
+            kfold_val_accuracies,
+            kfold_val_f1s,
+        )
+
+    def _load_dataloaders(
         self,
         train_labeled_data_df: pd.DataFrame,
         val_labeled_data_df: pd.DataFrame,
         test_labeled_data_df: pd.DataFrame,
         unlabeled_data_df: pd.DataFrame,
-        pretraining_trainer: pl.Trainer,
-        finetuning_trainer: pl.Trainer,
-        pretrained_feature_extractor=None,
-    ):
-        """Run a single self-supervised experiment:
-        - Self-supervised backbone pretraining on unlabeled data (unless pretrained_feature_extractor is provided)
-        - Supervised classifier training on labeled data using the pretrained backbone.
+    ) -> Tuple[
+        torch.utils.data.DataLoader,
+        torch.utils.data.DataLoader,
+        torch.utils.data.DataLoader,
+        torch.utils.data.DataLoader,
+    ]:
         """
-        if pretrained_feature_extractor is not None:
-            feature_extractor = pretrained_feature_extractor
-        else:
-            feature_extractor = self._run_pretraining(
-                unlabeled_data_df=unlabeled_data_df,
-                pretraining_trainer=pretraining_trainer,
-            )
-        return self._run_supervised_finetuning(
-            feature_extractor=feature_extractor,
-            train_labeled_data_df=train_labeled_data_df,
-            val_labeled_data_df=val_labeled_data_df,
-            test_labeled_data_df=test_labeled_data_df,
-            finetuning_trainer=finetuning_trainer,
-        )
+        Labeled triple (train/val/test) plus unlabeled pretraining loader.
 
-    def _type(self) -> str:
-        """Return model type string used in run folder naming."""
-        return "self_supervised"
-
-    def _load_unlabeled_dataloader(
-        self, unlabeled_data_df: pd.DataFrame
-    ) -> torch.utils.data.DataLoader:
-        """Load unlabeled dataloader for self-supervised learning."""
-        # SimCLR-style defaults: two independently sampled strong views.
-        unlabeled_view_1_transforms = trf.Compose(
-            [
-                trf.RandomResizedCrop(
-                    size=self.config.general_config.data.downscaled_image_size,
-                    scale=(0.2, 1.0),
-                ),
-                trf.RandomHorizontalFlip(p=0.5),
-                trf.RandomVerticalFlip(p=0.5),
-                trf.RandomApply(
-                    [trf.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1)],
-                    p=0.8,
-                ),
-                trf.RandomGrayscale(p=0.2),
-                trf.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
-                trf.ToTensor(),
-            ]
-        )
-        unlabeled_view_2_transforms = trf.Compose(
-            [
-                trf.RandomResizedCrop(
-                    size=self.config.general_config.data.downscaled_image_size,
-                    scale=(0.2, 1.0),
-                ),
-                trf.RandomHorizontalFlip(p=0.5),
-                trf.RandomVerticalFlip(p=0.5),
-                trf.RandomApply(
-                    [trf.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1)],
-                    p=0.8,
-                ),
-                trf.RandomGrayscale(p=0.2),
-                trf.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
-                trf.ToTensor(),
-            ]
-        )
-        unlabeled_data_folder_path = os.path.join(
-            self.config.general_config.data.data_folder,
-            self.config.general_config.data.unlabeled_data_folder,
-        )
-        unlabeled_plaque_dataset = PlaqueDataset(
-            unlabeled_data_df,
-            data_folder_path=unlabeled_data_folder_path,
-            name_to_label=self.config.name_to_label,
-            transforms=[unlabeled_view_1_transforms, unlabeled_view_2_transforms],
-            preload=self.config.general_config.data.preload,
-            description="unlabeled plaque images",
-            normalize_data=self.config.general_config.data.normalize_data,
-            normalize_mean=self.config.general_config.data.normalize_mean,
-            normalize_std=self.config.general_config.data.normalize_std,
-            use_extra_features=self.config.general_config.data.use_extra_features,
-            downscaled_image_size=self.config.general_config.data.downscaled_image_size,
-            downscaling_method=self.config.general_config.data.downscaling_method,
-        )
-        unlabeled_dataloader = torch.utils.data.DataLoader(
-            unlabeled_plaque_dataset,
-            batch_size=self.config.general_config.training.batch_size,
-            shuffle=True,
-            num_workers=self.config.general_config.training.num_workers,
-            pin_memory=self.config.general_config.training.pin_memory,
-            persistent_workers=self.config.general_config.training.persistent_workers,
-        )
-        return unlabeled_dataloader
+        Returns:
+            ``(train_labeled_dl, val_labeled_dl, test_labeled_dl, unlabeled_dl)`` — the
+            first three from :meth:`_load_labeled_dataloaders`, the last from
+            :meth:`_load_unlabeled_dataloader`.
+        """
+        return self._load_labeled_dataloaders(
+            train_labeled_data_df, val_labeled_data_df, test_labeled_data_df
+        ), self._load_unlabeled_dataloader(unlabeled_data_df)
 
     def _load_labeled_dataloaders(
         self,
@@ -239,13 +285,20 @@ class SelfSupervisedRunner(BaseRunner):
         torch.utils.data.DataLoader,
         torch.utils.data.DataLoader,
     ]:
-        """Load labeled dataloaders for self-supervised learning."""
+        """
+        Train/val/test loaders for the supervised finetuning stage.
+
+        Args:
+            train_labeled_data_df, val_labeled_data_df, test_labeled_data_df: Labeled splits.
+
+        Returns:
+            ``(train_labeled_dataloader, val_labeled_dataloader, test_labeled_dataloader)``.
+        """
         labeled_data_folder_path = os.path.join(
             self.config.general_config.data.data_folder,
             self.config.general_config.data.labeled_data_folder,
         )
-        # TODO: To be adjusted later.
-        # Training transforms (strong augmentations for consistency)
+        # Finetuning uses standard augmentations on labeled train only
         labeled_train_transforms = trf.Compose(
             [
                 trf.RandomHorizontalFlip(p=0.5),
@@ -328,22 +381,89 @@ class SelfSupervisedRunner(BaseRunner):
 
         return train_labeled_dataloader, val_labeled_dataloader, test_labeled_dataloader
 
-    def _load_dataloaders(
-        self,
-        train_labeled_data_df: pd.DataFrame,
-        val_labeled_data_df: pd.DataFrame,
-        test_labeled_data_df: pd.DataFrame,
-        unlabeled_data_df: pd.DataFrame,
-    ) -> Tuple[
-        torch.utils.data.DataLoader,
-        torch.utils.data.DataLoader,
-        torch.utils.data.DataLoader,
-        torch.utils.data.DataLoader,
-    ]:
-        """Load dataloaders for self-supervised learning."""
-        return self._load_labeled_dataloaders(
-            train_labeled_data_df, val_labeled_data_df, test_labeled_data_df
-        ), self._load_unlabeled_dataloader(unlabeled_data_df)
+    def _load_unlabeled_dataloader(
+        self, unlabeled_data_df: pd.DataFrame
+    ) -> torch.utils.data.DataLoader:
+        """
+        Unlabeled pretraining loader with two stochastic views (contrastive / SSL).
+
+        Args:
+            unlabeled_data_df: Rows without labels.
+
+        Returns:
+            Shuffled :class:`~torch.utils.data.DataLoader` over :class:`~models.data.plaque_dataset.PlaqueDataset`
+            with ``transforms=[view1, view2]``.
+        """
+        # Two independent strong pipelines (SimCLR-style multi-crop)
+        unlabeled_view_1_transforms = trf.Compose(
+            [
+                trf.RandomResizedCrop(
+                    size=self.config.general_config.data.downscaled_image_size,
+                    scale=(0.2, 1.0),
+                ),
+                trf.RandomHorizontalFlip(p=0.5),
+                trf.RandomVerticalFlip(p=0.5),
+                trf.RandomApply(
+                    [
+                        trf.ColorJitter(
+                            brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1
+                        )
+                    ],
+                    p=0.8,
+                ),
+                trf.RandomGrayscale(p=0.2),
+                trf.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
+                trf.ToTensor(),
+            ]
+        )
+        unlabeled_view_2_transforms = trf.Compose(
+            [
+                trf.RandomResizedCrop(
+                    size=self.config.general_config.data.downscaled_image_size,
+                    scale=(0.2, 1.0),
+                ),
+                trf.RandomHorizontalFlip(p=0.5),
+                trf.RandomVerticalFlip(p=0.5),
+                trf.RandomApply(
+                    [
+                        trf.ColorJitter(
+                            brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1
+                        )
+                    ],
+                    p=0.8,
+                ),
+                trf.RandomGrayscale(p=0.2),
+                trf.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
+                trf.ToTensor(),
+            ]
+        )
+        unlabeled_data_folder_path = os.path.join(
+            self.config.general_config.data.data_folder,
+            self.config.general_config.data.unlabeled_data_folder,
+        )
+        unlabeled_plaque_dataset = PlaqueDataset(
+            unlabeled_data_df,
+            data_folder_path=unlabeled_data_folder_path,
+            name_to_label=self.config.name_to_label,
+            transforms=[unlabeled_view_1_transforms, unlabeled_view_2_transforms],
+            preload=self.config.general_config.data.preload,
+            description="unlabeled plaque images",
+            normalize_data=self.config.general_config.data.normalize_data,
+            normalize_mean=self.config.general_config.data.normalize_mean,
+            normalize_std=self.config.general_config.data.normalize_std,
+            use_extra_features=self.config.general_config.data.use_extra_features,
+            downscaled_image_size=self.config.general_config.data.downscaled_image_size,
+            downscaling_method=self.config.general_config.data.downscaling_method,
+        )
+        unlabeled_dataloader = torch.utils.data.DataLoader(
+            unlabeled_plaque_dataset,
+            batch_size=self.config.general_config.training.batch_size,
+            shuffle=True,
+            num_workers=self.config.general_config.training.num_workers,
+            pin_memory=self.config.general_config.training.pin_memory,
+            persistent_workers=self.config.general_config.training.persistent_workers,
+        )
+        return unlabeled_dataloader
 
     def _run_pretraining(
         self,
@@ -351,8 +471,18 @@ class SelfSupervisedRunner(BaseRunner):
         pretraining_trainer: pl.Trainer,
     ):
         """
-        Run self-supervised backbone pretraining on unlabeled data only.
-        Returns the pretrained feature extractor (optionally loaded from checkpoint).
+        Fit SimCLR/VAE (or load weights) and return the trained feature extractor.
+
+        Args:
+            unlabeled_data_df: Unlabeled index for pretraining.
+            pretraining_trainer: Lightning trainer for SSL (checkpointing may be off).
+
+        Returns:
+            ``BaseFeatureExtractor`` moved to ``config.general_config.system.device``.
+
+        Note:
+            If ``skip_if_checkpoint_exists`` and a file exists at the computed path,
+            loads ``state_dict`` into a freshly constructed backbone instead of training.
         """
         self_supervised_config = self.config.self_supervised.self_supervised_config
         pretrained_model_path = os.path.join(
@@ -396,12 +526,20 @@ class SelfSupervisedRunner(BaseRunner):
         if self_supervised_config.pretraining_method == "vae":
             kwargs["latent_dim"] = self.config.self_supervised.vae_config.latent_dim
             kwargs["beta"] = self.config.self_supervised.vae_config.beta
-            kwargs["reconstruction_loss"] = self.config.self_supervised.vae_config.reconstruction_loss
+            kwargs["reconstruction_loss"] = (
+                self.config.self_supervised.vae_config.reconstruction_loss
+            )
         elif self_supervised_config.pretraining_method == "simclr":
-            kwargs["temperature"] = self.config.self_supervised.simclr_config.temperature
-            kwargs["projection_head_sizes"] = self.config.self_supervised.simclr_config.projection_head_sizes
-            kwargs["projection_head_activation"] = self.config.self_supervised.simclr_config.projection_head_activation
-        
+            kwargs["temperature"] = (
+                self.config.self_supervised.simclr_config.temperature
+            )
+            kwargs["projection_head_sizes"] = (
+                self.config.self_supervised.simclr_config.projection_head_sizes
+            )
+            kwargs["projection_head_activation"] = (
+                self.config.self_supervised.simclr_config.projection_head_activation
+            )
+
         ssl_module = BaseLightningSelfSupervisedModule.create_self_supervised_module(
             name=self_supervised_config.pretraining_method,
             feature_extractor=feature_extractor,
@@ -431,8 +569,19 @@ class SelfSupervisedRunner(BaseRunner):
         finetuning_trainer: pl.Trainer,
     ):
         """
-        Train the classifier on top of the given feature extractor and evaluate on test set.
-        Returns (train_losses, val_losses, train_accuracies, val_accuracies, test_labels, test_preds).
+        Clone ``feature_extractor``, attach a fresh classifier, fit, and run ``test``.
+
+        Args:
+            feature_extractor: Trained backbone (deep-copied so folds do not share weights).
+            train_labeled_data_df, val_labeled_data_df, test_labeled_data_df: Labeled splits.
+            finetuning_trainer: Lightning trainer for supervised phase.
+
+        Returns:
+            ``(test_labels, test_preds)`` collected on ``pl_module`` during ``trainer.test``.
+
+        Side effects:
+            Logs model summary, writes test metrics to ``log_file_writer``; may delete
+            checkpoint in ``debug_mode``.
         """
         (train_labeled_dataloader, val_labeled_dataloader, test_labeled_dataloader) = (
             self._load_labeled_dataloaders(
@@ -443,7 +592,9 @@ class SelfSupervisedRunner(BaseRunner):
         )
         if self.config.general_config.system.debug_mode:
             self.log_file_writer.write("Statistics of the dataloaders:")
-            self.log_file_writer.write(f"Train labeled dataloader size: {len(train_labeled_dataloader)}")
+            self.log_file_writer.write(
+                f"Train labeled dataloader size: {len(train_labeled_dataloader)}"
+            )
             self.log_file_writer.write(
                 f"Val labeled dataloader size: {len(val_labeled_dataloader)}"
             )
@@ -488,106 +639,47 @@ class SelfSupervisedRunner(BaseRunner):
         )
         finetuning_trainer.fit(pl_module, datamodule=data_module)
 
-        checkpoint_path = os.path.join(self.runs_folder, "checkpoints", "best_model.ckpt")
+        checkpoint_path = os.path.join(
+            self.runs_folder, "checkpoints", "best_model.ckpt"
+        )
         results = finetuning_trainer.test(
             pl_module,
             datamodule=data_module,
             ckpt_path=checkpoint_path,
             verbose=False,
         )
-        self.log_file_writer.write(
-            f"Test results:\n{results[0] if results else {}}"
-        )
+        self.log_file_writer.write(f"Test results:\n{results[0] if results else {}}")
 
-        if self.config.general_config.system.debug_mode and os.path.exists(checkpoint_path):
+        if self.config.general_config.system.debug_mode and os.path.exists(
+            checkpoint_path
+        ):
             os.remove(checkpoint_path)
             os.removedirs(os.path.join(self.runs_folder, "checkpoints"))
 
         return pl_module.test_labels, pl_module.test_preds
 
-    def _hyperparameter_tuning(self):
-        """Run cross-validation style tuning for self-supervised learning."""
-        cfg_train = self.config.general_config.training
-        num_folds = round(1 / cfg_train.hyperparemeter_tuning_val_size)
-        kfold = StratifiedKFold(
-            n_splits=num_folds,
-            shuffle=True,
-            random_state=self.config.general_config.system.random_seed,
-        )
-        kfold_train_losses = []
-        kfold_val_losses = []
-        kfold_train_accuracies = []
-        kfold_val_accuracies = []
-        kfold_train_f1s = []
-        kfold_val_f1s = []
+    def _apply_extra_tuning_params(self, trial: optuna.Trial) -> None:
+        """
+        Sample SSL-method hyperparameters from ``<method>_config.hyperparameter_tuning``.
 
-        pretraining_callbacks = [FileTQDMProgressBar(file_path=self.log_file_path)]
-        setup_pytorch_lightning_logging(self.log_file_path)
-        pretraining_trainer = pl.Trainer(
-            accelerator="gpu" if torch.cuda.is_available() else "cpu",
-            devices=1,
-            max_epochs=self.config.self_supervised.self_supervised_config.pretraining.num_epochs,
-            enable_checkpointing=False,
-            enable_progress_bar=True,
-            callbacks=pretraining_callbacks,
-            log_every_n_steps=1,
-            num_sanity_val_steps=0,
-            logger=False,
-        )
-        pretrained_feature_extractor = self._run_pretraining(
-            unlabeled_data_df=self.unlabeled_data_df,
-            pretraining_trainer=pretraining_trainer,
-        )
+        Args:
+            trial: Current Optuna trial.
 
-        for fold, (train_idx, val_idx) in tqdm(
-            enumerate(kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
-            total=num_folds,
-            desc="Hyperparameter tuning",
-            file=self.log_file_writer,
-        ):
-            train_labeled_data_df = self.labeled_data_df.iloc[train_idx]
-            val_labeled_data_df = self.labeled_data_df.iloc[val_idx]
-            finetuning_trainer = self._create_base_trainer()
-            (
-                train_losses,
-                val_losses,
-                train_accuracies,
-                val_accuracies,
-                train_f1s,
-                val_f1s,
-                _,
-                _,
-            ) = self._run_supervised_finetuning(
-                feature_extractor=pretrained_feature_extractor,
-                train_labeled_data_df=train_labeled_data_df,
-                val_labeled_data_df=val_labeled_data_df,
-                test_labeled_data_df=pd.DataFrame(),
-                finetuning_trainer=finetuning_trainer,
-            )
+        Returns:
+            None (writes into ``self.config.self_supervised.<method>_config``).
+        """
 
-            # The following part ensures that the best model performance based on the checkpoint monitor is used for the hyperparameter tuning
-            index = -1
-            if self.config.general_config.training.checkpoint_monitor == "val_f1":
-                index = np.argmax(val_f1s)
-            elif self.config.general_config.training.checkpoint_monitor == "val_loss":
-                index = np.argmin(val_losses)
-            elif self.config.general_config.training.checkpoint_monitor == "val_accuracy":
-                index = np.argmax(val_accuracies)
-            else:
-                raise ValueError(f"Invalid checkpoint monitor: {self.config.general_config.training.checkpoint_monitor}")
-            
-            kfold_train_losses.append(train_losses[index])
-            kfold_val_losses.append(val_losses[index])
-            kfold_train_accuracies.append(train_accuracies[index])
-            kfold_val_accuracies.append(val_accuracies[index])
-            kfold_train_f1s.append(train_f1s[index])
-            kfold_val_f1s.append(val_f1s[index])
-
-        return (
-            kfold_train_losses,
-            kfold_val_losses,
-            kfold_train_accuracies,
-            kfold_val_accuracies,
-            kfold_train_f1s,
-            kfold_val_f1s,
+        method = self.config.self_supervised.self_supervised_config.pretraining_method
+        method_cfg = getattr(
+            self.config.self_supervised,
+            f"{method}_config",
+            None,
         )
+        if method_cfg is not None and hasattr(method_cfg, "hyperparameter_tuning"):
+            ht = method_cfg.hyperparameter_tuning
+            ht_dict = ht.to_dict() if hasattr(ht, "to_dict") else dict(ht)
+            for k, v in suggest_params_from_dict(
+                trial, ht_dict, f"ssl_{method}"
+            ).items():
+                param_name = k.replace(f"ssl_{method}.", "")
+                getattr(self.config.self_supervised, f"{method}_config")[param_name] = v

@@ -1,1 +1,1 @@
-# Self-supervised modules package
+"""Self-supervised Lightning pretraining (VAE, SimCLR)."""

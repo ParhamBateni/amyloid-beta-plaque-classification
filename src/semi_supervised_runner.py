@@ -1,53 +1,213 @@
-from typing import Union
-from models.base_runner import BaseRunner
-from models.config import Config
-from sklearn.model_selection import train_test_split, StratifiedKFold
+"""Semi-supervised training: labeled + unlabeled data and FixMatch-style modules."""
+
 import os
-import torch
+
+import numpy as np
+import optuna
 import pandas as pd
 import pytorch_lightning as pl
-from models.data.lightning_data_module import SemiSupervisedPlaqueLightningDataModule
+import torch
 import torch.nn as nn
-from torchvision import transforms as trf
-from models.data.plaque_dataset import PlaqueDatasetAugmented, PlaqueDataset
 from pytorch_lightning.utilities.model_summary import summarize
+from sklearn.model_selection import StratifiedKFold, train_test_split
+from torchvision import transforms as trf
 from tqdm import tqdm
+
+from models.base_runner import BaseRunner
+from models.config import Config
+from models.data.lightning_data_module import SemiSupervisedPlaqueLightningDataModule
+from models.data.plaque_dataset import PlaqueDataset, PlaqueDatasetAugmented
 from models.modules.semi_supervised.base_lightning_semi_supervised_module import (
     BaseLightningSemiSupervisedModule,
 )
-import numpy as np
 from utils.hyperparameter_tuning_utils import suggest_params_from_dict
 
 
 class SemiSupervisedRunner(BaseRunner):
     """Runner for semi-supervised learning experiments."""
 
-    def __init__(self, config: Config, run_mode: str):
+    def __init__(self, config: Config, run_mode: str) -> None:
         super().__init__(config, run_mode)
 
-    def _apply_extra_tuning_params(self, trial):
-        """Apply semi-supervised config tuning params."""
-
-        method = self.config.semi_supervised.semi_supervised_config.model_name
-        method_cfg = getattr(
-            self.config.semi_supervised,
-            f"{method}_config",
-            None,
-        )
-        if method_cfg is not None and hasattr(method_cfg, "hyperparameter_tuning"):
-            ht = method_cfg.hyperparameter_tuning
-            ht_dict = ht.to_dict() if hasattr(ht, "to_dict") else dict(ht)
-            for k, v in suggest_params_from_dict(
-                trial, ht_dict, f"semi_supervised_{method}"
-            ).items():
-                param_name = k.replace(f"semi_supervised_{method}.", "")
-                getattr(self.config.semi_supervised, f"{method}_config")[param_name] = v
-    
-    # TODO: This function is not used yet, so it is not implemented.
     def load_model_from_checkpoint(self, checkpoint_path: str, device: str = "cpu"):
-        """Load a semi-supervised model from checkpoint, auto-initializing components from config."""
-        # TODO: This function is not used yet, so it is not implemented.
+        """Load a semi-supervised model from checkpoint (not implemented yet)."""
+        # TODO: Implement when needed.
         pass
+
+    def _type(self) -> str:
+        """Return model type string."""
+        return "semi_supervised"
+
+    def _load_dataloaders(
+        self,
+        train_labeled_data_df: pd.DataFrame,
+        val_labeled_data_df: pd.DataFrame,
+        test_labeled_data_df: pd.DataFrame,
+        unlabeled_data_df: pd.DataFrame,
+    ):
+        """
+        Build labeled train/val/test loaders plus an unlabeled train loader (weak+strong views).
+
+        Args:
+            train_labeled_data_df, val_labeled_data_df, test_labeled_data_df: Labeled splits.
+            unlabeled_data_df: Rows with missing labels for consistency / pseudo-labeling.
+
+        Returns:
+            ``(train_labeled, val_labeled, test_labeled, train_unlabeled)`` loaders.
+        """
+        labeled_data_folder_path = os.path.join(
+            self.config.general_config.data.data_folder,
+            self.config.general_config.data.labeled_data_folder,
+        )
+        unlabeled_data_folder_path = os.path.join(
+            self.config.general_config.data.data_folder,
+            self.config.general_config.data.unlabeled_data_folder,
+        )
+
+        # Labeled branch: standard geometric + color jitter (supervised loss path)
+        labeled_train_transforms = trf.Compose(
+            [
+                trf.RandomHorizontalFlip(p=0.5),
+                trf.RandomVerticalFlip(p=0.5),
+                trf.RandomRotation(degrees=(0, 90)),
+                trf.ColorJitter(brightness=0.2, contrast=0.2),
+                trf.ToTensor(),
+            ]
+        )
+        train_labeled_plaque_dataset = PlaqueDatasetAugmented(
+            train_labeled_data_df,
+            data_folder_path=labeled_data_folder_path,
+            name_to_label=self.config.name_to_label,
+            transforms=labeled_train_transforms,
+            preload=self.config.general_config.data.preload,
+            description="train labeled plaque images",
+            normalize_data=self.config.general_config.data.normalize_data,
+            normalize_mean=self.config.general_config.data.normalize_mean,
+            normalize_std=self.config.general_config.data.normalize_std,
+            use_extra_features=self.config.general_config.data.use_extra_features,
+            downscaled_image_size=self.config.general_config.data.downscaled_image_size,
+            downscaling_method=self.config.general_config.data.downscaling_method,
+            number_of_augmentations=self.config.general_config.data.number_of_augmentations,
+        )
+
+        val_labeled_plaque_dataset = PlaqueDatasetAugmented(
+            val_labeled_data_df,
+            data_folder_path=labeled_data_folder_path,
+            name_to_label=self.config.name_to_label,
+            transforms=None,
+            preload=self.config.general_config.data.preload,
+            description="val labeled plaque images",
+            normalize_data=self.config.general_config.data.normalize_data,
+            normalize_mean=self.config.general_config.data.normalize_mean,
+            normalize_std=self.config.general_config.data.normalize_std,
+            use_extra_features=self.config.general_config.data.use_extra_features,
+            downscaled_image_size=self.config.general_config.data.downscaled_image_size,
+            downscaling_method=self.config.general_config.data.downscaling_method,
+            number_of_augmentations=0,
+        )
+
+        test_labeled_plaque_dataset = PlaqueDatasetAugmented(
+            test_labeled_data_df,
+            data_folder_path=labeled_data_folder_path,
+            name_to_label=self.config.name_to_label,
+            transforms=None,
+            preload=self.config.general_config.data.preload,
+            description="test labeled plaque images",
+            normalize_data=self.config.general_config.data.normalize_data,
+            normalize_mean=self.config.general_config.data.normalize_mean,
+            normalize_std=self.config.general_config.data.normalize_std,
+            use_extra_features=self.config.general_config.data.use_extra_features,
+            downscaled_image_size=self.config.general_config.data.downscaled_image_size,
+            downscaling_method=self.config.general_config.data.downscaling_method,
+            number_of_augmentations=0,
+        )
+
+        # FixMatch-style defaults: weak view for pseudo-labeling, strong view for consistency.
+        # Weak view for pseudo-labels (same as original FixMatch)
+        unlabeled_weak_transforms = trf.Compose(
+            [
+                trf.RandomHorizontalFlip(p=0.5),
+                trf.RandomVerticalFlip(p=0.5),
+                trf.RandomResizedCrop(
+                    size=self.config.general_config.data.downscaled_image_size,
+                    scale=(0.8, 1.0),
+                ),
+                trf.ToTensor(),
+            ]
+        )
+
+        # Strong view for consistency (same as original FixMatch)
+        unlabeled_strong_transforms = trf.Compose(
+            [
+                trf.RandomHorizontalFlip(p=0.5),
+                trf.RandomVerticalFlip(p=0.5),
+                trf.RandomResizedCrop(
+                    size=self.config.general_config.data.downscaled_image_size,
+                    scale=(0.8, 1.0),
+                ),
+                trf.RandAugment(num_ops=2, magnitude=10),
+                trf.ToTensor(),
+            ]
+        )
+
+        train_unlabeled_plaque_dataset = PlaqueDataset(
+            unlabeled_data_df,
+            data_folder_path=unlabeled_data_folder_path,
+            name_to_label=self.config.name_to_label,
+            transforms=[unlabeled_weak_transforms, unlabeled_strong_transforms],
+            preload=self.config.general_config.data.preload,
+            description="train unlabeled plaque images",
+            normalize_data=self.config.general_config.data.normalize_data,
+            normalize_mean=self.config.general_config.data.normalize_mean,
+            normalize_std=self.config.general_config.data.normalize_std,
+            use_extra_features=self.config.general_config.data.use_extra_features,
+            downscaled_image_size=self.config.general_config.data.downscaled_image_size,
+            downscaling_method=self.config.general_config.data.downscaling_method,
+        )
+
+        # Create dataloaders
+        train_labeled_dataloader = torch.utils.data.DataLoader(
+            train_labeled_plaque_dataset,
+            batch_size=self.config.general_config.training.batch_size,
+            shuffle=True,
+            num_workers=self.config.general_config.training.num_workers,
+            pin_memory=self.config.general_config.training.pin_memory,
+            persistent_workers=self.config.general_config.training.persistent_workers,
+        )
+
+        val_labeled_dataloader = torch.utils.data.DataLoader(
+            val_labeled_plaque_dataset,
+            batch_size=self.config.general_config.training.batch_size,
+            shuffle=False,
+            num_workers=self.config.general_config.training.num_workers,
+            pin_memory=self.config.general_config.training.pin_memory,
+            persistent_workers=self.config.general_config.training.persistent_workers,
+        )
+
+        test_labeled_dataloader = torch.utils.data.DataLoader(
+            test_labeled_plaque_dataset,
+            batch_size=self.config.general_config.training.batch_size,
+            shuffle=False,
+            num_workers=self.config.general_config.training.num_workers,
+            pin_memory=self.config.general_config.training.pin_memory,
+            persistent_workers=self.config.general_config.training.persistent_workers,
+        )
+
+        train_unlabeled_dataloader = torch.utils.data.DataLoader(
+            train_unlabeled_plaque_dataset,
+            batch_size=self.config.general_config.training.batch_size,
+            shuffle=True,
+            num_workers=self.config.general_config.training.num_workers,
+            pin_memory=self.config.general_config.training.pin_memory,
+            persistent_workers=self.config.general_config.training.persistent_workers,
+        )
+
+        return (
+            train_labeled_dataloader,
+            val_labeled_dataloader,
+            test_labeled_dataloader,
+            train_unlabeled_dataloader,
+        )
 
     def _run_single_experiment(
         self,
@@ -57,8 +217,17 @@ class SemiSupervisedRunner(BaseRunner):
         unlabeled_data_df: pd.DataFrame,
         trainer: pl.Trainer,
     ):
-        """Run a single semi-supervised experiment."""
-        # Create dataloaders
+        """
+        Instantiate the configured semi-supervised Lightning module, fit, and test.
+
+        Args:
+            train_labeled_data_df, val_labeled_data_df, test_labeled_data_df: Labeled splits.
+            unlabeled_data_df: Unlabeled pool for the consistency branch.
+            trainer: Lightning trainer instance.
+
+        Returns:
+            ``(test_labels, test_preds)`` from the module after ``trainer.test``.
+        """
         (
             train_labeled_dataloader,
             val_labeled_dataloader,
@@ -153,25 +322,38 @@ class SemiSupervisedRunner(BaseRunner):
             ckpt_path=checkpoint_path,
             verbose=False,
         )
-        self.log_file_writer.write(
-            f"Test results:\n{results[0] if results else {}}"
-        )
+        self.log_file_writer.write(f"Test results:\n{results[0] if results else {}}")
 
-        if self.config.general_config.system.debug_mode and os.path.exists(checkpoint_path):
+        if self.config.general_config.system.debug_mode and os.path.exists(
+            checkpoint_path
+        ):
             os.remove(checkpoint_path)
             os.removedirs(os.path.join(self.runs_folder, "checkpoints"))
 
         return pl_module.test_labels, pl_module.test_preds
 
     def _cross_validate(self, labeled_kfold: StratifiedKFold):
-        """Run cross-validation for semi-supervised learning."""
+        """
+        K-fold CV using the full ``unlabeled_data_df`` each fold (labeled folds only change).
+
+        Args:
+            labeled_kfold: Stratified splitter on labeled indices.
+
+        Returns:
+            ``(kfold_test_labels, kfold_test_preds)`` per fold.
+
+        Side effects:
+            Saves ``best_model_cv.ckpt`` for the fold with lowest final val loss when not in debug.
+        """
         kfold_test_labels = []
         kfold_test_preds = []
         best_val_loss = float("inf")
         best_trainer = None
 
         for fold, (train_idx, test_idx) in tqdm(
-            enumerate(labeled_kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
+            enumerate(
+                labeled_kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])
+            ),
             total=labeled_kfold.n_splits,
             desc="Cross-validating",
             file=self.log_file_writer,
@@ -186,7 +368,9 @@ class SemiSupervisedRunner(BaseRunner):
                 random_state=self.config.general_config.system.random_seed,
             )
 
-            trainer = self._create_base_trainer(tensorboard_log_name=f"tensorboard_cv_{fold}")
+            trainer = self._create_base_trainer(
+                tensorboard_log_name=f"tensorboard_cv_{fold}"
+            )
             test_labels, test_preds = self._run_single_experiment(
                 train_labeled_data_df=train_labeled_data_df,
                 val_labeled_data_df=val_labeled_data_df,
@@ -212,242 +396,98 @@ class SemiSupervisedRunner(BaseRunner):
 
         return kfold_test_labels, kfold_test_preds
 
-    def _hyperparameter_tuning(self):
+    def _hyperparameter_tuning(self, labeled_kfold: StratifiedKFold):
         """
-        K-fold loop for hyperparameter tuning on labeled data only.
+        Inner CV for Optuna: same k-fold axis as ``_cross_validate``, but test DataFrame empty.
 
-        Mirrors the supervised runner: we split the full labeled set into
-        k folds (derived from training.hyperparemeter_tuning_val_size),
-        train on k-1 folds and validate on the remaining one. We ignore
-        the test outputs and use only train/val metrics for tuning.
+        Args:
+            labeled_kfold: Splitter (``n_splits`` from ``hyperparemeter_tuning_val_size``).
+
+        Returns:
+            ``(kfold_val_losses, kfold_val_accuracies, kfold_val_f1s)`` with one entry per
+            fold at the epoch index selected by ``checkpoint_monitor``.
+
+        Note:
+            ``self.unlabeled_data_df`` is always passed through; only labeled rows are folded.
         """
-        cfg_train = self.config.general_config.training
-        num_folds = round(1 / cfg_train.hyperparemeter_tuning_val_size)
-        kfold = StratifiedKFold(
-            n_splits=num_folds,
-            shuffle=True,
-            random_state=self.config.general_config.system.random_seed,
-        )
-        kfold_train_losses = []
         kfold_val_losses = []
-        kfold_train_accuracies = []
         kfold_val_accuracies = []
-        kfold_train_f1s = []
         kfold_val_f1s = []
 
-        for fold, (train_idx, val_idx) in tqdm(
-            enumerate(kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
-            total=num_folds,
+        for fold, (train_idx, _test_idx) in tqdm(
+            enumerate(labeled_kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
+            total=labeled_kfold.n_splits,
             desc="Hyperparameter tuning",
             file=self.log_file_writer,
         ):
             train_labeled_data_df = self.labeled_data_df.iloc[train_idx]
-            val_labeled_data_df = self.labeled_data_df.iloc[val_idx]
+            train_labeled_data_df, val_labeled_data_df = train_test_split(
+                train_labeled_data_df,
+                test_size=self.config.general_config.training.val_size
+                / (1 - self.config.general_config.training.test_size),
+                stratify=train_labeled_data_df["Label"],
+                random_state=self.config.general_config.system.random_seed,
+            )
 
             trainer = self._create_base_trainer()
-            (
-                train_losses,
-                val_losses,
-                train_accuracies,
-                val_accuracies,
-                train_f1s,
-                val_f1s,
-                _,
-                _,
-            ) = self._run_single_experiment(
+            self._run_single_experiment(
                 train_labeled_data_df=train_labeled_data_df,
                 val_labeled_data_df=val_labeled_data_df,
                 test_labeled_data_df=pd.DataFrame(),
                 unlabeled_data_df=self.unlabeled_data_df,
                 trainer=trainer,
             )
-
+            val_f1s = trainer.callback_metrics["val_f1"]
+            val_losses = trainer.callback_metrics["val_loss"]
+            val_accuracies = trainer.callback_metrics["val_accuracy"]
+            
             # The following part ensures that the best model performance based on the checkpoint monitor is used for the hyperparameter tuning
             index = -1
             if self.config.general_config.training.checkpoint_monitor == "val_f1":
                 index = np.argmax(val_f1s)
             elif self.config.general_config.training.checkpoint_monitor == "val_loss":
                 index = np.argmin(val_losses)
-            elif self.config.general_config.training.checkpoint_monitor == "val_accuracy":
+            elif (
+                self.config.general_config.training.checkpoint_monitor == "val_accuracy"
+            ):
                 index = np.argmax(val_accuracies)
             else:
-                raise ValueError(f"Invalid checkpoint monitor: {self.config.general_config.training.checkpoint_monitor}")
-            
-            kfold_train_losses.append(train_losses[index])
+                raise ValueError(
+                    f"Invalid checkpoint monitor: {self.config.general_config.training.checkpoint_monitor}"
+                )
+
             kfold_val_losses.append(val_losses[index])
-            kfold_train_accuracies.append(train_accuracies[index])
             kfold_val_accuracies.append(val_accuracies[index])
-            kfold_train_f1s.append(train_f1s[index])
             kfold_val_f1s.append(val_f1s[index])
 
         return (
-            kfold_train_losses,
             kfold_val_losses,
-            kfold_train_accuracies,
             kfold_val_accuracies,
-            kfold_train_f1s,
             kfold_val_f1s,
         )
 
-    def _type(self) -> str:
-        """Return model type string."""
-        return "semi_supervised"
+    def _apply_extra_tuning_params(self, trial: optuna.Trial) -> None:
+        """
+        Sample hyperparameters declared under ``<method>_config.hyperparameter_tuning``.
 
-    def _load_dataloaders(
-        self,
-        train_labeled_data_df: pd.DataFrame,
-        val_labeled_data_df: pd.DataFrame,
-        test_labeled_data_df: pd.DataFrame,
-        unlabeled_data_df: pd.DataFrame,
-    ):
-        """Load dataloaders for semi-supervised learning."""
-        labeled_data_folder_path = os.path.join(
-            self.config.general_config.data.data_folder,
-            self.config.general_config.data.labeled_data_folder,
-        )
-        unlabeled_data_folder_path = os.path.join(
-            self.config.general_config.data.data_folder,
-            self.config.general_config.data.unlabeled_data_folder,
-        )
+        Args:
+            trial: Current Optuna trial.
 
-        # TODO: To be adjusted later.
-        # Training transforms (strong augmentations for consistency)
-        labeled_train_transforms = trf.Compose(
-            [
-                trf.RandomHorizontalFlip(p=0.5),
-                trf.RandomVerticalFlip(p=0.5),
-                trf.RandomRotation(degrees=(0, 90)),
-                trf.ColorJitter(brightness=0.2, contrast=0.2),
-                trf.ToTensor(),
-            ]
-        )
-        train_labeled_plaque_dataset = PlaqueDatasetAugmented(
-            train_labeled_data_df,
-            data_folder_path=labeled_data_folder_path,
-            name_to_label=self.config.name_to_label,
-            transforms=labeled_train_transforms,
-            preload=self.config.general_config.data.preload,
-            description="train labeled plaque images",
-            normalize_data=self.config.general_config.data.normalize_data,
-            normalize_mean=self.config.general_config.data.normalize_mean,
-            normalize_std=self.config.general_config.data.normalize_std,
-            use_extra_features=self.config.general_config.data.use_extra_features,
-            downscaled_image_size=self.config.general_config.data.downscaled_image_size,
-            downscaling_method=self.config.general_config.data.downscaling_method,
-            number_of_augmentations=self.config.general_config.data.number_of_augmentations,
-        )
+        Returns:
+            None (mutates ``self.config.semi_supervised.<method>_config`` in place).
+        """
 
-        val_labeled_plaque_dataset = PlaqueDatasetAugmented(
-            val_labeled_data_df,
-            data_folder_path=labeled_data_folder_path,
-            name_to_label=self.config.name_to_label,
-            transforms=None,
-            preload=self.config.general_config.data.preload,
-            description="val labeled plaque images",
-            normalize_data=self.config.general_config.data.normalize_data,
-            normalize_mean=self.config.general_config.data.normalize_mean,
-            normalize_std=self.config.general_config.data.normalize_std,
-            use_extra_features=self.config.general_config.data.use_extra_features,
-            downscaled_image_size=self.config.general_config.data.downscaled_image_size,
-            downscaling_method=self.config.general_config.data.downscaling_method,
-            number_of_augmentations=0,
+        method = self.config.semi_supervised.semi_supervised_config.model_name
+        method_cfg = getattr(
+            self.config.semi_supervised,
+            f"{method}_config",
+            None,
         )
-
-        test_labeled_plaque_dataset = PlaqueDatasetAugmented(
-            test_labeled_data_df,
-            data_folder_path=labeled_data_folder_path,
-            name_to_label=self.config.name_to_label,
-            transforms=None,
-            preload=self.config.general_config.data.preload,
-            description="test labeled plaque images",
-            normalize_data=self.config.general_config.data.normalize_data,
-            normalize_mean=self.config.general_config.data.normalize_mean,
-            normalize_std=self.config.general_config.data.normalize_std,
-            use_extra_features=self.config.general_config.data.use_extra_features,
-            downscaled_image_size=self.config.general_config.data.downscaled_image_size,
-            downscaling_method=self.config.general_config.data.downscaling_method,
-            number_of_augmentations=0,
-        )
-
-        # FixMatch-style defaults: weak view for pseudo-labeling, strong view for consistency.
-        # Weak view for pseudo-labels (same as original FixMatch)
-        unlabeled_weak_transforms = trf.Compose([
-            trf.RandomHorizontalFlip(p=0.5),
-            trf.RandomVerticalFlip(p=0.5),
-            trf.RandomResizedCrop(
-                size=self.config.general_config.data.downscaled_image_size, 
-                scale=(0.8, 1.0)
-            ),
-            trf.ToTensor(),
-        ])
-
-        # Strong view for consistency (same as original FixMatch)
-        unlabeled_strong_transforms = trf.Compose([
-            trf.RandomHorizontalFlip(p=0.5),
-            trf.RandomVerticalFlip(p=0.5),
-            trf.RandomResizedCrop(
-                size=self.config.general_config.data.downscaled_image_size, 
-                scale=(0.8, 1.0)
-            ),
-            trf.RandAugment(num_ops=2, magnitude=10),
-            trf.ToTensor(),
-        ])
-        
-        train_unlabeled_plaque_dataset = PlaqueDataset(
-            unlabeled_data_df,
-            data_folder_path=unlabeled_data_folder_path,
-            name_to_label=self.config.name_to_label,
-            transforms=[unlabeled_weak_transforms, unlabeled_strong_transforms],
-            preload=self.config.general_config.data.preload,
-            description="train unlabeled plaque images",
-            normalize_data=self.config.general_config.data.normalize_data,
-            normalize_mean=self.config.general_config.data.normalize_mean,
-            normalize_std=self.config.general_config.data.normalize_std,
-            use_extra_features=self.config.general_config.data.use_extra_features,
-            downscaled_image_size=self.config.general_config.data.downscaled_image_size,
-            downscaling_method=self.config.general_config.data.downscaling_method,
-        )
-
-        # Create dataloaders
-        train_labeled_dataloader = torch.utils.data.DataLoader(
-            train_labeled_plaque_dataset,
-            batch_size=self.config.general_config.training.batch_size,
-            shuffle=True,
-            num_workers=self.config.general_config.training.num_workers,
-            pin_memory=self.config.general_config.training.pin_memory,
-            persistent_workers=self.config.general_config.training.persistent_workers,
-        )
-
-        val_labeled_dataloader = torch.utils.data.DataLoader(
-            val_labeled_plaque_dataset,
-            batch_size=self.config.general_config.training.batch_size,
-            shuffle=False,
-            num_workers=self.config.general_config.training.num_workers,
-            pin_memory=self.config.general_config.training.pin_memory,
-            persistent_workers=self.config.general_config.training.persistent_workers,
-        )
-
-        test_labeled_dataloader = torch.utils.data.DataLoader(
-            test_labeled_plaque_dataset,
-            batch_size=self.config.general_config.training.batch_size,
-            shuffle=False,
-            num_workers=self.config.general_config.training.num_workers,
-            pin_memory=self.config.general_config.training.pin_memory,
-            persistent_workers=self.config.general_config.training.persistent_workers,
-        )
-
-        train_unlabeled_dataloader = torch.utils.data.DataLoader(
-            train_unlabeled_plaque_dataset,
-            batch_size=self.config.general_config.training.batch_size,
-            shuffle=True,
-            num_workers=self.config.general_config.training.num_workers,
-            pin_memory=self.config.general_config.training.pin_memory,
-            persistent_workers=self.config.general_config.training.persistent_workers,
-        )
-
-        return (
-            train_labeled_dataloader,
-            val_labeled_dataloader,
-            test_labeled_dataloader,
-            train_unlabeled_dataloader,
-        )
+        if method_cfg is not None and hasattr(method_cfg, "hyperparameter_tuning"):
+            ht = method_cfg.hyperparameter_tuning
+            ht_dict = ht.to_dict() if hasattr(ht, "to_dict") else dict(ht)
+            for k, v in suggest_params_from_dict(
+                trial, ht_dict, f"semi_supervised_{method}"
+            ).items():
+                param_name = k.replace(f"semi_supervised_{method}.", "")
+                getattr(self.config.semi_supervised, f"{method}_config")[param_name] = v

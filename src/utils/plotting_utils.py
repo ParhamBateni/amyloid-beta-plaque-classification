@@ -3,9 +3,10 @@ Plotting and visualization utilities.
 """
 
 import os
-import numpy as np
-import matplotlib.pyplot as plt
 from typing import Any, List
+
+import matplotlib.pyplot as plt
+import numpy as np
 
 
 def save_loss_and_accuracy(

@@ -1,14 +1,20 @@
+"""Π-model: same network, two augmentations; consistency between their logits."""
+
+from typing import Any, Callable, Dict, Iterable, Optional
+
 import torch
 import torch.nn as nn
-from typing import Any
-from .base_lightning_semi_supervised_module import BaseLightningSemiSupervisedModule
-from models.modules.architecture.feature_extractors.base_feature_extractor import BaseFeatureExtractor
+
 from models.modules.architecture.classifiers.base_classifier import BaseClassifier
-from typing import Callable, Iterable
+from models.modules.architecture.feature_extractors.base_feature_extractor import (
+    BaseFeatureExtractor,
+)
+
+from .base_lightning_semi_supervised_module import BaseLightningSemiSupervisedModule
 
 
 class PiModelLightningModule(BaseLightningSemiSupervisedModule):
-    """Pi-Model implementation for semi-supervised learning with consistency regularization."""
+    """Consistency between weak and strong augmented views via :meth:`_get_consistency_loss`."""
 
     def __init__(
         self,
@@ -17,7 +23,7 @@ class PiModelLightningModule(BaseLightningSemiSupervisedModule):
         classifier: BaseClassifier,
         criterion: nn.Module,
         optimizer: Callable[[Iterable[torch.nn.Parameter]], torch.optim.Optimizer],
-        optimizer_kwargs: dict = {},
+        optimizer_kwargs: Optional[Dict[str, Any]] = None,
         use_extra_features: bool = False,
         use_thresholding: bool = False,
         threshold_min: float = 0.1,
@@ -27,7 +33,22 @@ class PiModelLightningModule(BaseLightningSemiSupervisedModule):
         consistency_loss_type: str = "mse",
         ramp_up_epochs: int = 10,
         ramp_up_function: str = "linear",
-    ):
+    ) -> None:
+        """
+        Initialize the Π-model with the same arguments as the semi-supervised base class.
+
+        Args:
+            feature_extractor: CNN trunk.
+            classifier: Classification head.
+            criterion: Supervised loss.
+            optimizer: Optimizer factory.
+            optimizer_kwargs: Optimizer kwargs.
+            use_extra_features, use_thresholding, threshold_*: As in base.
+            consistency_lambda_max, consistency_loss_type, ramp_up_epochs, ramp_up_function: As in base.
+
+        Returns:
+            None.
+        """
         super().__init__(
             feature_extractor=feature_extractor,
             classifier=classifier,
@@ -47,10 +68,15 @@ class PiModelLightningModule(BaseLightningSemiSupervisedModule):
 
     def _compute_consistency_loss(self, unlabeled_batch: Any) -> torch.Tensor:
         """
-        Compute Pi-Model consistency loss.
+        1. Take weak (view 0) and strong (view 1) augmented tensors from the batch.
+        2. Forward both through :meth:`forward` to logits.
+        3. Return :meth:`_get_consistency_loss` between the two logit tensors.
 
-        The Pi-Model enforces that the same image with different augmentations
-        should produce similar predictions.
+        Args:
+            unlabeled_batch: Batch with ``normalized_transformed_image_tensors`` shaped for two views.
+
+        Returns:
+            Scalar consistency loss; zero tensor if ``unlabeled_batch`` is ``None``.
         """
         if unlabeled_batch is None:
             return torch.tensor(0.0, device=self.device)

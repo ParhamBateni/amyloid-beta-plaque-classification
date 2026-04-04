@@ -1,12 +1,16 @@
+"""VAE pretraining: reconstruct normalized raw images from a latent code."""
+
+from typing import Any, Callable, Dict, Iterable, Optional, Tuple
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Tuple, Callable, Iterable, Dict
 
-from .base_lightning_self_supervised_module import BaseLightningSelfSupervisedModule
 from models.modules.architecture.feature_extractors.base_feature_extractor import (
     BaseFeatureExtractor,
 )
+
+from .base_lightning_self_supervised_module import BaseLightningSelfSupervisedModule
 
 
 class LightningVAEModule(BaseLightningSelfSupervisedModule):
@@ -29,11 +33,27 @@ class LightningVAEModule(BaseLightningSelfSupervisedModule):
         optimizer: Callable[
             [Iterable[torch.nn.Parameter]], torch.optim.Optimizer
         ] = torch.optim.AdamW,
-        optimizer_kwargs: dict = {},
+        optimizer_kwargs: Optional[Dict[str, Any]] = None,
         latent_dim: int = 32,
         beta: float = 1.0,
         reconstruction_loss: str = "mse",
-    ):
+    ) -> None:
+        """
+        1. Call the self-supervised base with backbone and optimizer settings.
+        2. Build ``fc_mu``, ``fc_logvar``, and the transpose-convolution decoder.
+        3. Record VAE-specific hyperparameters.
+
+        Args:
+            feature_extractor: Backbone whose outputs feed ``μ`` and ``log σ²`` heads.
+            optimizer: Optimizer class.
+            optimizer_kwargs: Optimizer kwargs.
+            latent_dim: Size of the latent vector ``z``.
+            beta: Weight on the KL term in the ELBO-style objective.
+            reconstruction_loss: ``mse``, ``l1``, or ``bce`` for ``recon_x`` vs. ``x``.
+
+        Returns:
+            None.
+        """
         super().__init__(
             feature_extractor=feature_extractor,
             optimizer=optimizer,
@@ -99,23 +119,64 @@ class LightningVAEModule(BaseLightningSelfSupervisedModule):
         )
 
     def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        1. Run ``x`` through ``feature_extractor``.
+        2. Map features to ``μ`` and ``log σ²`` with linear layers.
+
+        Args:
+            x: Image batch ``(B, 3, H, W)``.
+
+        Returns:
+            ``(mu, logvar)`` each ``(B, latent_dim)``.
+        """
         features = self.feature_extractor(x)
         mu = self.fc_mu(features)
         logvar = self.fc_logvar(features)
         return mu, logvar
 
     def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+        """
+        1. Compute ``σ = exp(0.5 * logvar)``.
+        2. Sample ``ε ~ N(0, I)`` matching shape.
+        3. Return ``μ + ε σ``.
+
+        Args:
+            mu: Mean ``(B, latent_dim)``.
+            logvar: Log-variance ``(B, latent_dim)``.
+
+        Returns:
+            Sampled ``z`` ``(B, latent_dim)``.
+        """
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
 
     def decode(self, z: torch.Tensor) -> torch.Tensor:
-        x = self.decoder(z)
-        return x
+        """
+        Map latent codes through the transposed convolution decoder to RGB maps.
+
+        Args:
+            z: Latent batch ``(B, latent_dim)``.
+
+        Returns:
+            Reconstructed images ``(B, 3, H, W)``.
+        """
+        return self.decoder(z)
 
     def forward(
         self, x: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        1. Encode ``x`` to ``μ`` and ``logvar``.
+        2. Sample ``z`` with :meth:`reparameterize`.
+        3. Decode ``z`` to ``recon_x``.
+
+        Args:
+            x: Input images.
+
+        Returns:
+            ``(recon_x, mu, logvar)``.
+        """
         mu, logvar = self.encode(x)
         z = self.reparameterize(mu, logvar)
         recon_x = self.decode(z)
@@ -128,6 +189,19 @@ class LightningVAEModule(BaseLightningSelfSupervisedModule):
         mu: torch.Tensor,
         logvar: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        1. Compute reconstruction loss between ``recon_x`` and ``x`` (BCE, L1, or MSE).
+        2. Compute analytic KL for diagonal Gaussian vs. standard normal (closed form).
+        3. Return total loss ``recon + β · KL`` and the two components.
+
+        Args:
+            x: Target images.
+            recon_x: Decoder output.
+            mu, logvar: Encoder outputs.
+
+        Returns:
+            ``(loss, recon_loss, kld)`` scalars (0-dim tensors).
+        """
         if self.reconstruction_loss == "bce":
             recon_loss = F.binary_cross_entropy(recon_x, x, reduction="mean")
         elif self.reconstruction_loss == "l1":
@@ -145,7 +219,15 @@ class LightningVAEModule(BaseLightningSelfSupervisedModule):
         self, x: torch.Tensor
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
-        Implementation of the generic self-supervised loss interface for a VAE.
+        1. Run :meth:`forward` to get ``recon_x``, ``mu``, ``logvar``.
+        2. Call :meth:`_compute_loss` for the ELBO-style objective.
+        3. Package ``recon_loss`` and ``kld`` into the metrics dict.
+
+        Args:
+            x: Batch of normalized raw images (same as reconstruction target).
+
+        Returns:
+            ``(loss, {"recon_loss": ..., "kld": ...})``.
         """
         recon_x, mu, logvar = self(x)
         loss, recon_loss, kld = self._compute_loss(x, recon_x, mu, logvar)
@@ -155,7 +237,17 @@ class LightningVAEModule(BaseLightningSelfSupervisedModule):
         }
         return loss, metrics
 
-    def _unpack_batch(self, batch: Any) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _unpack_batch(self, batch: Any) -> torch.Tensor:
+        """
+        1. Ignore paths, transforms, extras, and labels.
+        2. Return normalized raw RGB tensors used as VAE input and target.
+
+        Args:
+            batch: ``PlaqueDataset`` batch tuple.
+
+        Returns:
+            ``normalized_raw_image_tensors``.
+        """
         (
             _image_paths,
             normalized_raw_image_tensors,
@@ -163,5 +255,4 @@ class LightningVAEModule(BaseLightningSelfSupervisedModule):
             _extra_features,
             _labels,
         ) = batch
-        # For VAE, we use the normalized raw image tensors as both input and target.
         return normalized_raw_image_tensors

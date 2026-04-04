@@ -1,1 +1,1 @@
-# Semi-supervised modules package
+"""Semi-supervised Lightning modules (Π-model, FixMatch, mean teacher)."""

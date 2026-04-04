@@ -20,3 +20,5 @@ data.zip
 .venv-backups
 .hf_home
 notes.txt
+
+.env

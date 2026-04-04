@@ -5,13 +5,23 @@ Utilities for Optuna-based hyperparameter tuning with cross-validation.
 import csv
 import json
 import os
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List
 
 import optuna
 
 
 def set_nested(config: Any, dotted_path: str, value: Any) -> None:
-    """Set a nested value in Config using dotted path (e.g. 'training.learning_rate')."""
+    """
+    Assign ``value`` into a nested :class:`~models.config.Config` (or dict-like) object.
+
+    Args:
+        config: Root object supporting ``attr`` / ``getitem`` chaining.
+        dotted_path: Keys joined by ``.`` (e.g. ``training.learning_rate``).
+        value: Value to set at the final key.
+
+    Returns:
+        None (mutates ``config`` in place).
+    """
     parts = dotted_path.split(".")
     obj = config
     for part in parts[:-1]:
@@ -25,8 +35,16 @@ def suggest_params_from_dict(
     prefix: str = "",
 ) -> Dict[str, Any]:
     """
-    Recursively suggest hyperparameters from a tuning config.
-    Returns flat dict of {dotted_key: value}.
+    Walk a nested tuning dict and call ``trial.suggest_categorical`` for list leaves.
+
+    Args:
+        trial: Current Optuna trial.
+        tuning_dict: Nested structure: lists become categorical choices; dicts recurse.
+        prefix: Dot-prefix for flat keys (used internally).
+
+    Returns:
+        Flat map ``{ "dotted.key": suggested_value, ... }``. Skips keys named
+        ``hyperparameter_tuning`` or ``cv_grid_search``.
     """
     result = {}
     for key, value in tuning_dict.items():
@@ -57,16 +75,29 @@ def run_optuna_study(
     n_jobs: int = 1,
 ) -> optuna.Study:
     """
-    Run Optuna study and save results to log_dir.
-    objective_fn receives (trial, study) so it can check for duplicate params.
+    Create or resume a SQLite-backed study, optimize, and export artifacts.
+
+    Args:
+        objective_fn: ``(trial, study) -> float``; ``study`` enables duplicate-param caching.
+        n_trials: Target **completed** trial count (already-finished trials count toward cap).
+        study_name: Optuna study name (SQLite file under ``log_dir``).
+        log_dir: Directory for ``optuna_study.db``, ``best_params.json``, CSV export.
+        n_jobs: Reserved for parallel trials; optimization currently uses ``n_jobs=1``
+            inside ``study.optimize`` for typical single-GPU setups.
+
+    Returns:
+        Finished :class:`optuna.Study` (``best_trial`` available).
+
+    Note:
+        You can add a pruner via ``optuna.create_study`` here if you want early stopping
+        of unpromising trials; not enabled by default.
     """
     log_dir = os.path.abspath(log_dir)
     os.makedirs(log_dir, exist_ok=True)
     storage = f"sqlite:///{os.path.join(log_dir, 'optuna_study.db')}"
 
-    # TODO: You might want to consider using a pruner to avoid running trials that are already known to be bad
     study = optuna.create_study(
-        direction="maximize",  # We maximize the F1 score
+        direction="maximize",
         study_name=study_name,
         storage=storage,
         load_if_exists=True,
@@ -89,12 +120,13 @@ def run_optuna_study(
         print(
             f"Study has {n_completed} trials. Running {n_remaining} more to reach target of {n_trials}."
         )
+        # Single-process trials avoid GPU contention when one device is shared
         study.optimize(
             wrapped_objective,
             n_trials=n_remaining,
             show_progress_bar=True,
             gc_after_trial=True,
-            n_jobs=1,  # It looks like there is only one GPU available in the machine, so we run the trials sequentially to avoid GPU memory time bottlenecks for a faster tuning process
+            n_jobs=1,
         )
     else:
         print(
@@ -118,7 +150,17 @@ def run_optuna_study(
 
 def save_trials_to_csv(study: optuna.Study, log_dir: str) -> None:
     """
-    Save all trials (params, mean CV loss, std CV loss) to a CSV file.
+    Export completed trials to ``trials_results.csv``.
+
+    Args:
+        study: Study after ``optimize``.
+        log_dir: Output directory (same as study storage folder).
+
+    Returns:
+        None. No-op if ``study.trials`` is empty.
+
+    Output columns:
+        Trial id, repeat flag, mean/std F1, accuracy, loss, then one column per param key.
     """
     if not study.trials:
         return

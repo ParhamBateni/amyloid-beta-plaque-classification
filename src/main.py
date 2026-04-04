@@ -1,12 +1,27 @@
+"""CLI entry point for plaque classification experiments."""
+
 import argparse
 
-from utils.logging_utils import print_log
-from models.config import Config
 from models.base_runner import BaseRunner
+from models.config import Config
+from utils.logging_utils import print_log
 
-if __name__ == "__main__":
-    # Parse arguments with config files
-    parser = argparse.ArgumentParser(description="Plaque Analysis with Config Files")
+
+def main() -> None:
+    """
+    CLI entry: parse arguments, load :class:`~models.config.Config`, run the experiment.
+
+    Args:
+        None (reads ``sys.argv``).
+
+    Returns:
+        None.
+
+    Side effects:
+        Creates run directories, trains models, writes logs and reports depending on
+        ``--run_mode``.
+    """
+    parser = argparse.ArgumentParser(description="Plaque analysis with JSON configs")
 
     parser.add_argument(
         "--config_dir",
@@ -19,26 +34,23 @@ if __name__ == "__main__":
         type=str,
         default="supervised",
         choices=["supervised", "semi_supervised", "self_supervised"],
-        help="Training mode to use",
+        help="Training paradigm",
     )
     parser.add_argument(
         "--run_mode",
         type=str,
         default="hyperparameter_tuning",
         choices=["single", "cross_validate", "hyperparameter_tuning"],
-        help="Run mode to use",
+        help="Whether to run one split, k-fold CV, or Optuna HPO",
     )
-
     parser.add_argument(
         "--n_trials",
         type=int,
         default=2,
-        help="Number of trials to run for hyperparameter tuning",
+        help="Number of Optuna trials (hyperparameter_tuning only)",
     )
-    # Parse arguments
-    args = parser.parse_args()
 
-    # Load and merge configurations
+    args = parser.parse_args()
     config = Config.load_config(args.config_dir, args.train_mode)
 
     print_log(
@@ -56,3 +68,7 @@ if __name__ == "__main__":
         runner.hyperparameter_tuning(args.n_trials)
     else:
         raise ValueError(f"Invalid run mode: {args.run_mode}")
+
+
+if __name__ == "__main__":
+    main()

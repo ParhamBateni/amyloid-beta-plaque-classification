@@ -1,12 +1,16 @@
+from typing import Any, Dict
+
 import torch
 import torch.nn as nn
+
 from .base_feature_extractor import BaseFeatureExtractor
-from typing import Any, Dict
 
 
 class SimpleCNNFeatureExtractor(BaseFeatureExtractor):
     """
-    Simple CNN feature extractor.
+    Lightweight Conv–Pool stack ending in ``AdaptiveAvgPool2d(1)`` and a linear projection.
+
+    Suitable for small images and fast baselines; channel progression 3→32→64→128.
     """
 
     def __init__(
@@ -16,7 +20,22 @@ class SimpleCNNFeatureExtractor(BaseFeatureExtractor):
         freeze: bool = False,
         unfreeze_after_n_epochs: int = 0,
         **kwargs,
-    ):
+    ) -> None:
+        """
+        1. Call the parent with sizes and freeze schedule.
+        2. Build the Conv–Pool–AdaptiveAvgPool–Linear ``nn.Sequential`` trunk.
+        3. Run :meth:`BaseFeatureExtractor.post_init` to optionally freeze weights.
+
+        Args:
+            input_dim: Expected square side length of inputs (used by parent metadata).
+            output_size: Feature dimension after final linear.
+            freeze: Start with frozen trunk (see :meth:`BaseFeatureExtractor.post_init`).
+            unfreeze_after_n_epochs: Passed to parent for scheduled unfreezing.
+            **kwargs: Ignored (config extensibility).
+
+        Returns:
+            None.
+        """
         super().__init__(input_dim, output_size, freeze, unfreeze_after_n_epochs)
 
         self.feature_extractor = nn.Sequential(
@@ -36,18 +55,25 @@ class SimpleCNNFeatureExtractor(BaseFeatureExtractor):
 
     def forward(self, x_image: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the feature extractor.
+        1. Pass ``x_image`` through ``self.feature_extractor``.
+        2. Return the flattened/projected feature batch.
 
         Args:
-            x_image: Image tensor of shape (batch_size, channels, height, width)
+            x_image: ``(B, 3, H, W)`` with ``H, W`` matching training resolution.
 
         Returns:
-            Combined features tensor
+            ``(B, output_size)`` feature vectors.
         """
         image_features = self.feature_extractor(x_image)
         return image_features
 
     def to_dict(self) -> Dict[str, Any]:
+        """
+        Merge the parent dict with a string snapshot of the sequential trunk.
+
+        Returns:
+            Parent :meth:`BaseFeatureExtractor.to_dict` plus ``feature_extractor`` string.
+        """
         base_dict = super().to_dict()
         base_dict["feature_extractor"] = str(self.feature_extractor)
         return base_dict

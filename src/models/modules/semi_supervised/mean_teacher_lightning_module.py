@@ -1,16 +1,21 @@
+"""Mean teacher: EMA teacher targets for student on unlabeled augmentations."""
+
+import copy
+from typing import Any, Callable, Dict, Iterable, Optional
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import copy
-from typing import Any
-from .base_lightning_semi_supervised_module import BaseLightningSemiSupervisedModule
-from models.modules.architecture.feature_extractors.base_feature_extractor import BaseFeatureExtractor
+
 from models.modules.architecture.classifiers.base_classifier import BaseClassifier
-from typing import Callable, Iterable
+from models.modules.architecture.feature_extractors.base_feature_extractor import (
+    BaseFeatureExtractor,
+)
+
+from .base_lightning_semi_supervised_module import BaseLightningSemiSupervisedModule
 
 
 class MeanTeacherLightningModule(BaseLightningSemiSupervisedModule):
-    """Mean Teacher implementation for semi-supervised learning with EMA teacher model."""
+    """Student trains on labels + consistency to EMA teacher; teacher updated each batch."""
 
     def __init__(
         self,
@@ -19,7 +24,7 @@ class MeanTeacherLightningModule(BaseLightningSemiSupervisedModule):
         classifier: BaseClassifier,
         criterion: nn.Module,
         optimizer: Callable[[Iterable[torch.nn.Parameter]], torch.optim.Optimizer],
-        optimizer_kwargs: dict = {},
+        optimizer_kwargs: Optional[Dict[str, Any]] = None,
         use_extra_features: bool = False,
         use_thresholding: bool = False,
         threshold_min: float = 0.1,
@@ -31,7 +36,22 @@ class MeanTeacherLightningModule(BaseLightningSemiSupervisedModule):
         ramp_up_function: str = "linear",
         ema_decay: float = 0.99,
         inference_mode: bool = False,
-    ):
+    ) -> None:
+        """
+        1. Build the student via the base semi-supervised constructor.
+        2. Deep-copy frozen teacher backbone and head; disable their gradients.
+        3. Optionally replace :meth:`forward` with :meth:`_teacher_forward` for inference-only use.
+
+        Args:
+            feature_extractor, classifier, criterion, optimizer, optimizer_kwargs: Base args.
+            use_extra_features, use_thresholding, threshold_*: Base args.
+            consistency_lambda_max, consistency_loss_type, ramp_up_epochs, ramp_up_function: Base args.
+            ema_decay: EMA coefficient for teacher weight updates.
+            inference_mode: If True, use teacher forward as the public forward.
+
+        Returns:
+            None.
+        """
         super().__init__(
             feature_extractor=feature_extractor,
             classifier=classifier,
@@ -66,9 +86,22 @@ class MeanTeacherLightningModule(BaseLightningSemiSupervisedModule):
             param.requires_grad = False
 
     def _teacher_forward(
-        self, x_image: torch.Tensor, x_features: torch.Tensor = None
+        self,
+        x_image: torch.Tensor,
+        x_features: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Forward pass through teacher feature extractor and classifier."""
+        """
+        1. Run the teacher backbone on ``x_image``.
+        2. Optionally concatenate ``x_features``.
+        3. Return teacher classifier logits without autograd.
+
+        Args:
+            x_image: Image batch.
+            x_features: Optional tabular extras.
+
+        Returns:
+            Teacher logits ``(B, C)``.
+        """
         with torch.no_grad():
             x = self.teacher_feature_extractor(x_image)
             if (
@@ -81,7 +114,13 @@ class MeanTeacherLightningModule(BaseLightningSemiSupervisedModule):
         return x
 
     def _update_teacher_weights(self):
-        """Update teacher model weights using exponential moving average."""
+        """
+        1. For each teacher–student parameter pair in backbone and head, set
+           ``θ_t ← α θ_t + (1-α) θ_s`` with ``α = ema_decay``.
+
+        Returns:
+            None.
+        """
         with torch.no_grad():
             # Update feature extractor weights
             for teacher_param, student_param in zip(
@@ -105,18 +144,15 @@ class MeanTeacherLightningModule(BaseLightningSemiSupervisedModule):
 
     def _compute_consistency_loss(self, unlabeled_batch: Any) -> torch.Tensor:
         """
-        Compute Mean Teacher consistency loss.
+        1. Student forward on the strong augmented view (channel index 1).
+        2. Teacher forward on the weak view (channel index 0) via :meth:`_teacher_forward`.
+        3. Return :meth:`_get_consistency_loss` between student and teacher logits.
 
-        Mean Teacher enforces consistency between student and teacher predictions
-        on different augmentations of the same unlabeled image. The teacher model
-        is an exponential moving average (EMA) of the student model, providing
-        more stable targets for consistency regularization.
+        Args:
+            unlabeled_batch: Batch with paired weak/strong views in ``normalized_transformed_image_tensors``.
 
-        The key idea is:
-        1. Student model predicts on one augmented version (weak augmentation)
-        2. Teacher model (EMA) predicts on another augmented version (weak augmentation, different seed)
-        3. Consistency loss is computed between student and teacher predictions
-        4. Teacher weights are updated via EMA after each training step
+        Returns:
+            Scalar consistency loss; zero tensor if ``unlabeled_batch`` is ``None``.
         """
         if unlabeled_batch is None:
             return torch.tensor(0.0, device=self.device)
@@ -152,7 +188,17 @@ class MeanTeacherLightningModule(BaseLightningSemiSupervisedModule):
         return consistency_loss
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
-        """Update teacher model weights after each training batch."""
+        """
+        Apply one EMA step so the teacher tracks the student after each optimizer step.
+
+        Args:
+            outputs: Lightning step output (unused).
+            batch: Current batch (unused).
+            batch_idx: Batch index (unused).
+
+        Returns:
+            None.
+        """
         self._update_teacher_weights()
 
     # def on_train_end(self):

@@ -1,60 +1,85 @@
-from abc import abstractmethod, ABC
+import copy
+import json
+import os
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional, Tuple, Type
+
+import optuna
+import pandas as pd
+import pytorch_lightning as pl
+import torch
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, RichProgressBar
+from pytorch_lightning.loggers import TensorBoardLogger
+from sklearn.metrics import confusion_matrix as sklearn_confusion_matrix
+from sklearn.model_selection import StratifiedKFold, train_test_split
 
 from models.config import Config
-import os
-import torch
-from utils.data_utils import load_data_df
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, RichProgressBar
-import torch
-from utils.seed_utils import set_random_seeds
-from utils.logging_utils import (
-    AnsiStrippingFileRedirector,
-    setup_pytorch_lightning_logging,
-    FileTQDMProgressBar,
+from models.modules.architecture.classifiers.base_classifier import BaseClassifier
+from models.modules.architecture.feature_extractors.base_feature_extractor import (
+    BaseFeatureExtractor,
 )
-import optuna
+from utils.data_utils import load_data_df
 from utils.hyperparameter_tuning_utils import (
     run_optuna_study,
     set_nested,
     suggest_params_from_dict,
 )
-from typing import List, Tuple
-import json
-import copy
-from models.modules.architecture.feature_extractors.base_feature_extractor import (
-    BaseFeatureExtractor,
+from utils.logging_utils import (
+    AnsiStrippingFileRedirector,
+    FileTQDMProgressBar,
+    setup_pytorch_lightning_logging,
 )
-from models.modules.architecture.classifiers.base_classifier import BaseClassifier
-from sklearn.model_selection import StratifiedKFold
-import pandas as pd
-from sklearn.metrics import confusion_matrix as sklearn_confusion_matrix
-from utils.report_utils import generate_classification_report_df, save_classification_report, aggregate_reports
 from utils.plotting_utils import plot_confusion_matrix
-from sklearn.model_selection import train_test_split
-from pytorch_lightning.loggers import TensorBoardLogger
+from utils.report_utils import (
+    aggregate_reports,
+    generate_classification_report_df,
+    save_classification_report,
+)
+from utils.seed_utils import set_random_seeds
+
 
 class BaseRunner(ABC):
-    def __init__(self, config: Config, run_mode: str):
+    """Shared experiment lifecycle: data loading, training orchestration, reports, and Optuna HPO.
+
+    Subclasses implement ``_type``, ``_run_single_experiment``, ``_cross_validate``,
+    and ``_hyperparameter_tuning``. Optional: override ``_apply_extra_tuning_params``
+    for mode-specific Optuna search spaces.
+    """
+
+    def __init__(self, config: Config, run_mode: str) -> None:
+        """
+        1. Apply optional global seeding and set matmul precision.
+        2. Build ``runs_folder`` (mode- and job-specific), save ``config.txt``, load dataframes.
+        3. Open ``full_training_output.log`` via :class:`AnsiStrippingFileRedirector`.
+
+        Args:
+            config: Merged JSON config (includes ``run_id``, label maps, training knobs).
+            run_mode: One of ``single``, ``cross_validate``, or ``hyperparameter_tuning``.
+
+        Returns:
+            None.
+        """
         self.config = config
         self.run_mode = run_mode
-        # Set all random seeds for reproducibility
+
+        # Reproducibility across Python, NumPy, Torch, Lightning
         if config.general_config.system.seed_everything:
             set_random_seeds(config.general_config.system.random_seed)
 
-        # Enable Tensor Core optimized matmul precision on supported GPUs
+        # Faster matmul on Tensor Core GPUs; acceptable for training
         torch.set_float32_matmul_precision("medium")
 
         self.runs_folder = os.path.join(
             config.general_config.data.runs_folder, self.run_mode, self._type()
         )
         if run_mode != "hyperparameter_tuning":
-            # This is done so that the runs folder is the same for all trials in hyperparameter tuning
-            # Which is useful to continue the hyperparameter tuning from the previous trial in case it takes a long time
+            # Normal runs: isolate outputs per job / timestamp (``config.run_id``).
             self.runs_folder = os.path.join(self.runs_folder, config.run_id)
         else:
-            from semi_supervised_runner import SemiSupervisedRunner
+            # HPO: shared base folder so Optuna SQLite and trials stay under one tree;
+            # disambiguate by SSL method(s) and backbone name when multiple are configured.
             from self_supervised_runner import SelfSupervisedRunner
+            from semi_supervised_runner import SemiSupervisedRunner
 
             if isinstance(self, SemiSupervisedRunner):
                 methods = self.config.semi_supervised.semi_supervised_config.hyperparameter_tuning.model_name
@@ -95,14 +120,52 @@ class BaseRunner(ABC):
             unlabeled_sample_size=config.general_config.data.unlabeled_sample_size,
             train_mode=self._type(),
         )
-        self.log_file_path = os.path.join(
-            self.runs_folder, "full_training_output.log")
+        self.log_file_path = os.path.join(self.runs_folder, "full_training_output.log")
         self.log_file_writer = AnsiStrippingFileRedirector(
             self.log_file_path, redirect_to_stdout=True
         )
 
-    def run_single_experiment(self):
-        # Split labeled data
+    @staticmethod
+    def create_runner(train_mode: str, run_mode: str, config: Config) -> "BaseRunner":
+        """
+        Build the concrete runner for the requested training paradigm.
+
+        Args:
+            train_mode: ``supervised``, ``semi_supervised``, or ``self_supervised``.
+            run_mode: ``single``, ``cross_validate``, or ``hyperparameter_tuning``.
+            config: Loaded :class:`~models.config.Config` instance.
+
+        Returns:
+            An instance of ``SupervisedRunner``, ``SemiSupervisedRunner``, or
+            ``SelfSupervisedRunner``.
+
+        Raises:
+            ValueError: If ``train_mode`` is not recognized.
+        """
+        if train_mode == "supervised":
+            from supervised_runner import SupervisedRunner
+
+            return SupervisedRunner(config, run_mode)
+        if train_mode == "semi_supervised":
+            from semi_supervised_runner import SemiSupervisedRunner
+
+            return SemiSupervisedRunner(config, run_mode)
+        if train_mode == "self_supervised":
+            from self_supervised_runner import SelfSupervisedRunner
+
+            return SelfSupervisedRunner(config, run_mode)
+
+        raise ValueError(f"Invalid train mode: {train_mode}")
+
+    def run_single_experiment(self) -> None:
+        """
+        1. Stratified ``train_test_split`` then val split on the labeled frame.
+        2. Build a Lightning ``Trainer`` and call subclass ``_run_single_experiment``.
+        3. Plot confusion matrix and save classification report under ``self.runs_folder``.
+
+        Returns:
+            None.
+        """
         train_labeled_data_df, test_labeled_data_df = train_test_split(
             self.labeled_data_df,
             test_size=self.config.general_config.training.test_size,
@@ -116,7 +179,11 @@ class BaseRunner(ABC):
             stratify=train_labeled_data_df["Label"],
             random_state=self.config.general_config.system.random_seed,
         )
-        trainer = self._create_base_trainer(save_checkpoint=not self.config.general_config.system.debug_mode, save_tensorboard_logs=True)
+        # TensorBoard under runs_folder/single; checkpoints unless debug_mode
+        trainer = self._create_base_trainer(
+            save_checkpoint=not self.config.general_config.system.debug_mode,
+            tensorboard_log_name="tensorboard",
+        )
         if self._type() == "supervised":
             test_labels, test_preds = self._run_single_experiment(
                 train_labeled_data_df=train_labeled_data_df,
@@ -134,7 +201,9 @@ class BaseRunner(ABC):
             )
         elif self._type() == "self_supervised":
             pretraining_trainer = self._create_base_trainer(
-                save_checkpoint=False, max_epochs=self.config.self_supervised.self_supervised_config.pretraining.num_epochs)
+                save_checkpoint=False,
+                max_epochs=self.config.self_supervised.self_supervised_config.pretraining.num_epochs,
+            )
             test_labels, test_preds = self._run_single_experiment(
                 train_labeled_data_df=train_labeled_data_df,
                 val_labeled_data_df=val_labeled_data_df,
@@ -145,8 +214,7 @@ class BaseRunner(ABC):
             )
 
         confusion_matrix = sklearn_confusion_matrix(
-            test_labels, test_preds, labels=list(
-                self.config.name_to_label.values())
+            test_labels, test_preds, labels=list(self.config.name_to_label.values())
         )
         plot_confusion_matrix(
             confusion_matrix,
@@ -155,7 +223,6 @@ class BaseRunner(ABC):
             save=True,
         )
 
-        # Save classification report using common method
         classification_report_df = generate_classification_report_df(
             test_labels, test_preds, self.config.name_to_label.keys()
         )
@@ -165,20 +232,31 @@ class BaseRunner(ABC):
             classification_report_df, folder_path=self.runs_folder
         )
 
-    def cross_validate(self):
-        """Run cross-validation for supervised learning."""
-        labeled_kfold = StratifiedKFold(
-            n_splits=round(1 / self.config.general_config.training.test_size),
-            shuffle=True,
-            random_state=self.config.general_config.system.random_seed,
-        )
+    def cross_validate(self, labeled_kfold: Optional[StratifiedKFold] = None) -> None:
+        """
+        1. Build or reuse a stratified K-fold splitter on ``labeled_data_df``.
+        2. Call subclass ``_cross_validate`` for per-fold predictions.
+        3. Aggregate confusion matrices and classification reports and save plots/CSV.
+
+        Args:
+            labeled_kfold: Optional pre-built splitter. If ``None``, uses
+                ``n_splits = round(1 / test_size)`` from config (same as HPO).
+
+        Returns:
+            None.
+        """
+        if labeled_kfold is None:
+            labeled_kfold = StratifiedKFold(
+                n_splits=round(1 / self.config.general_config.training.test_size),
+                shuffle=True,
+                random_state=self.config.general_config.system.random_seed,
+            )
         kfold_test_labels, kfold_test_preds = self._cross_validate(labeled_kfold)
 
         confusion_matrices = []
         for test_labels, test_preds in zip(kfold_test_labels, kfold_test_preds):
             confusion_matrix = sklearn_confusion_matrix(
-                test_labels, test_preds, labels=list(
-                    self.config.name_to_label.values())
+                test_labels, test_preds, labels=list(self.config.name_to_label.values())
             )
             confusion_matrices.append(
                 pd.DataFrame(
@@ -208,17 +286,26 @@ class BaseRunner(ABC):
             classification_reports_df
         )
         self.log_file_writer.write("Aggregated classification report:")
-        self.log_file_writer.write(
-            aggregated_classification_reports_df.to_string())
+        self.log_file_writer.write(aggregated_classification_reports_df.to_string())
         save_classification_report(
             aggregated_classification_reports_df, folder_path=self.runs_folder
         )
 
-    def hyperparameter_tuning(self, n_trials: int):
-        """Run Optuna-based hyperparameter tuning with cross-validation."""
+    def hyperparameter_tuning(self, n_trials: int) -> None:
+        """
+        1. Reset the parent log file so each Optuna trial writes under its own folder.
+        2. Run :func:`run_optuna_study` with the nested ``objective`` closure.
+        3. Apply ``study.best_trial.params`` to ``self.config`` and run :meth:`cross_validate`.
+
+        Args:
+            n_trials: Target number of completed Optuna trials (may resume from DB).
+
+        Returns:
+            None.
+        """
         ht_base = self.runs_folder
 
-        # Reset the log file writer to deep copy the runner for each trial
+        # Trial copies use their own log path; drop the parent file logger first
         if os.path.exists(self.log_file_path):
             os.remove(self.log_file_path)
         self.log_file_writer = None
@@ -230,10 +317,23 @@ class BaseRunner(ABC):
             random_state=self.config.general_config.system.random_seed,
         )
 
-        def objective(trial, study):
-            params = {}
+        def objective(trial: optuna.Trial, study: optuna.Study) -> float:
+            """
+            1. Suggest hyperparameters into a deep-copied runner config (general, mode, architecture blocks).
+            2. Deduplicate against completed trials with identical params when possible.
+            3. Run inner CV via ``copy_runner._hyperparameter_tuning`` and return mean val F1.
+
+            Args:
+                trial: Current Optuna trial.
+                study: Parent study (for deduplication and persistence).
+
+            Returns:
+                Mean validation F1 across folds (Optuna maximizes this).
+            """
+            params: Dict[str, Any] = {}
             copy_runner = copy.deepcopy(self)
-            # General config (training)
+
+            # General training / architecture search space (general_config.hyperparameter_tuning)
             if hasattr(copy_runner.config, "general_config") and hasattr(
                 copy_runner.config.general_config, "hyperparameter_tuning"
             ):
@@ -243,7 +343,7 @@ class BaseRunner(ABC):
                     suggest_params_from_dict(trial, ht_dict, "general_config")
                 )
 
-            # Mode-specific config (supervised, semi_supervised, self_supervised)
+            # Mode section: supervised_config, semi_supervised_config, etc.
             section_name = self._type()
             config_key = section_name + "_config"
             section = getattr(copy_runner.config, section_name, None)
@@ -263,7 +363,7 @@ class BaseRunner(ABC):
             for key, value in params.items():
                 set_nested(copy_runner.config, key, value)
 
-            # Feature extractor and classifier params
+            # Per-architecture blocks in config.architectures.*
             fe_name = (
                 copy_runner.config.general_config.architecture.feature_extractor_name
             )
@@ -297,10 +397,9 @@ class BaseRunner(ABC):
                         param_name
                     ] = v
 
-            # Mode-specific extra tuning (e.g. SSL method params for self_supervised)
             copy_runner._apply_extra_tuning_params(trial)
 
-            # Always create trial folder and track everything (including duplicates)
+            # Per-trial artifacts: params.json, full_training_output.log, checkpoints
             trial_folder = os.path.join(ht_base, f"trial_{trial.number}")
             os.makedirs(trial_folder, exist_ok=True)
             copy_runner.runs_folder = trial_folder
@@ -311,7 +410,7 @@ class BaseRunner(ABC):
                 copy_runner.log_file_path, redirect_to_stdout=False
             )
 
-            # Skip re-running CV if we've already seen these exact params (avoids duplicate work)
+            # Deduplicate: same sampled params as an earlier COMPLETE trial → reuse value
             trial_params = dict(trial.params)
             for t in study.trials:
                 if (
@@ -320,36 +419,31 @@ class BaseRunner(ABC):
                     and t.value is not None
                     and dict(t.params) == trial_params
                 ):
-                    # Copy cv_std for CSV/tracking
+                    # Copy user_attrs so CSV / reporting stay consistent
                     trial.set_user_attr(
                         "mean_f1", t.user_attrs.get("mean_f1", float("nan"))
                     )
                     trial.set_user_attr(
-                        "cv_std_f1", t.user_attrs.get(
-                            "cv_std_f1", float("nan"))
+                        "cv_std_f1", t.user_attrs.get("cv_std_f1", float("nan"))
                     )
                     trial.set_user_attr(
-                        "mean_accuracy", t.user_attrs.get(
-                            "mean_accuracy", float("nan"))
+                        "mean_accuracy", t.user_attrs.get("mean_accuracy", float("nan"))
                     )
                     trial.set_user_attr(
                         "cv_std_accuracy",
                         t.user_attrs.get("cv_std_accuracy", float("nan")),
                     )
                     trial.set_user_attr(
-                        "mean_loss", t.user_attrs.get(
-                            "mean_loss", float("nan"))
+                        "mean_loss", t.user_attrs.get("mean_loss", float("nan"))
                     )
                     trial.set_user_attr(
-                        "cv_std_loss", t.user_attrs.get(
-                            "cv_std_loss", float("nan"))
+                        "cv_std_loss", t.user_attrs.get("cv_std_loss", float("nan"))
                     )
                     trial.set_user_attr("repeated_trial", True)
                     with open(os.path.join(trial_folder, "params.json"), "w") as f:
                         json.dump(trial.params, f, indent=2)
                     with open(
-                        os.path.join(
-                            trial_folder, "cached_from_trial.txt"), "w"
+                        os.path.join(trial_folder, "cached_from_trial.txt"), "w"
                     ) as f:
                         f.write(
                             f"Cached result from trial {t.number} (duplicate params, skipped CV)\n"
@@ -360,16 +454,12 @@ class BaseRunner(ABC):
                 json.dump(trial.params, f, indent=2)
 
             (
-                _,
                 kfold_val_losses,
-                _,
                 kfold_val_accuracies,
-                _,
                 kfold_val_f1s,
             ) = copy_runner._hyperparameter_tuning(labeled_kfold)
 
-            mean_accuracy = sum(kfold_val_accuracies) / \
-                len(kfold_val_accuracies)
+            mean_accuracy = sum(kfold_val_accuracies) / len(kfold_val_accuracies)
             cv_std_accuracy = (
                 sum((x - mean_accuracy) ** 2 for x in kfold_val_accuracies)
                 / len(kfold_val_accuracies)
@@ -377,8 +467,7 @@ class BaseRunner(ABC):
 
             mean_f1 = sum(kfold_val_f1s) / len(kfold_val_f1s)
             cv_std_f1 = (
-                sum((x - mean_f1) ** 2 for x in kfold_val_f1s) /
-                len(kfold_val_f1s)
+                sum((x - mean_f1) ** 2 for x in kfold_val_f1s) / len(kfold_val_f1s)
             ) ** 0.5
             trial.set_user_attr("repeated_trial", False)
             trial.set_user_attr("cv_std_accuracy", cv_std_accuracy)
@@ -403,39 +492,104 @@ class BaseRunner(ABC):
             n_jobs=self.config.general_config.training.num_workers,
         )
 
-        # Set the best parameters to the config
+        # Apply best trial back onto the live runner config for the final CV pass
         for key, value in study.best_trial.params.items():
             set_nested(self.config, key, value)
 
-        # Run the single experiment with the best parameters on all the test folds
-        self._cross_validate(labeled_kfold)
-        return study
+        self.cross_validate(labeled_kfold)
+
+    def _apply_extra_tuning_params(self, trial: optuna.Trial) -> None:
+        """
+        Hook for extra Optuna suggestions (e.g. SimCLR temperature, FixMatch threshold).
+
+        Args:
+            trial: Current Optuna trial (unused in base implementation).
+
+        Returns:
+            None.
+
+        Note:
+            Default is a no-op. Semi- and self-supervised runners override this.
+        """
+        pass
 
     @abstractmethod
     def _type(self) -> str:
-        pass
+        """
+        Returns:
+            Short runner tag used in paths and ``load_data_df`` (e.g. ``supervised``).
+        """
+        ...
 
     @abstractmethod
-    def _load_dataloaders(self, *args, **kwargs):
-        pass
+    def _run_single_experiment(
+        self,
+        train_labeled_data_df: pd.DataFrame,
+        val_labeled_data_df: pd.DataFrame,
+        test_labeled_data_df: pd.DataFrame,
+        *args,
+        **kwargs,
+    ) -> Tuple[List[float], List[float]]:
+        """
+        Train one model on the given splits; return test set labels and predictions.
+
+        Args:
+            train_labeled_data_df: Training rows (with ``Label``).
+            val_labeled_data_df: Validation rows.
+            test_labeled_data_df: Held-out test rows.
+            *args, **kwargs: Extra args (e.g. ``unlabeled_data_df``, ``trainer``).
+
+        Returns:
+            Tuple ``(test_labels, test_preds)`` as parallel lists of integers.
+
+        Note:
+            Exact return type may include additional metrics in subclasses; callers
+            in this codebase use the first two return values where applicable.
+        """
+        ...
 
     @abstractmethod
-    def _run_single_experiment(self, train_labeled_data_df: pd.DataFrame,
-                               val_labeled_data_df: pd.DataFrame,
-                               test_labeled_data_df: pd.DataFrame,
-                               *args, **kwargs) -> Tuple[List[float], List[float]]:
-        pass
+    def _cross_validate(
+        self, labeled_kfold: StratifiedKFold
+    ) -> Tuple[List[List[float]], List[List[float]]]:
+        """
+        Run one experiment per fold; each fold yields test labels and predictions.
+
+        Args:
+            labeled_kfold: Stratified splitter over ``self.labeled_data_df``.
+
+        Returns:
+            ``(kfold_test_labels, kfold_test_preds)`` — lists of per-fold label/pred lists.
+        """
+        ...
 
     @abstractmethod
-    def _cross_validate(self, labeled_kfold: StratifiedKFold) -> Tuple[List[List[float]], List[List[float]]]:
-        pass
+    def _hyperparameter_tuning(
+        self, labeled_kfold: StratifiedKFold
+    ) -> Tuple[List[float], List[float], List[float]]:
+        """
+        Inner CV used inside the Optuna objective (no held-out test fold in each inner run).
 
-    @abstractmethod
-    def _hyperparameter_tuning(self) -> Tuple[List[List[float]], List[List[float]]]:
-        pass
+        Args:
+            labeled_kfold: Stratified splitter reused across trials.
 
-    def _create_base_optimizer(self):
-        """Create optimizer based on config."""
+        Returns:
+            ``(kfold_val_losses, kfold_val_accuracies, kfold_val_f1s)`` — one scalar per inner fold
+            taken at the best epoch according to ``checkpoint_monitor``.
+        """
+        ...
+
+    def _create_base_optimizer(self) -> Type[torch.optim.Optimizer]:
+        """
+        1. Read ``general_config.training.optimizer`` as a lowercase string.
+        2. Return the matching ``torch.optim`` class.
+
+        Returns:
+            Uninstantiated optimizer class (e.g. ``torch.optim.AdamW``).
+
+        Raises:
+            ValueError: If the name is not ``adam``, ``adamw``, or ``sgd``.
+        """
         if self.config.general_config.training.optimizer.lower() == "adamw":
             return torch.optim.AdamW
         elif self.config.general_config.training.optimizer.lower() == "adam":
@@ -447,15 +601,37 @@ class BaseRunner(ABC):
                 f"Optimizer {self.config.general_config.training.optimizer} not found"
             )
 
-    def _get_base_optimizer_kwargs(self):
-        """Get optimizer keyword arguments."""
+    def _get_base_optimizer_kwargs(self) -> Dict[str, float]:
+        """
+        Default keyword arguments for constructing the optimizer.
+
+        Returns:
+            Dict with at least ``lr`` and ``weight_decay`` from config.
+        """
         return {
             "lr": self.config.general_config.training.learning_rate,
             "weight_decay": self.config.general_config.training.weight_decay,
         }
 
-    def _create_base_trainer(self, save_checkpoint: bool = True, tensorboard_log_name: str = None,  max_epochs: int = None):
-        """Create PyTorch Lightning trainer."""
+    def _create_base_trainer(
+        self,
+        save_checkpoint: bool = True,
+        tensorboard_log_name: Optional[str] = None,
+        max_epochs: Optional[int] = None,
+    ) -> pl.Trainer:
+        """
+        1. Assemble callbacks (early stopping, progress bar, optional checkpointing).
+        2. Choose accelerator/device and epoch count from config or ``max_epochs``.
+        3. Attach TensorBoard logger when ``tensorboard_log_name`` is set.
+
+        Args:
+            save_checkpoint: If True, add ``ModelCheckpoint`` on ``checkpoint_monitor``.
+            tensorboard_log_name: If set, log to ``TensorBoardLogger`` under ``runs_folder``.
+            max_epochs: Override epoch count; default from ``general_config.training``.
+
+        Returns:
+            Configured ``pytorch_lightning.Trainer`` instance.
+        """
         callbacks = []
 
         # Early stopping
@@ -482,7 +658,8 @@ class BaseRunner(ABC):
                     monitor=self.config.general_config.training.checkpoint_monitor,
                     mode=(
                         "max"
-                        if "f1" in self.config.general_config.training.checkpoint_monitor
+                        if "f1"
+                        in self.config.general_config.training.checkpoint_monitor
                         else "min"
                     ),
                     save_last=False,
@@ -492,17 +669,28 @@ class BaseRunner(ABC):
         return pl.Trainer(
             accelerator="gpu" if torch.cuda.is_available() else "cpu",
             devices=1,
-            max_epochs=max_epochs if max_epochs is not None else self.config.general_config.training.num_epochs,
+            max_epochs=max_epochs
+            if max_epochs is not None
+            else self.config.general_config.training.num_epochs,
             callbacks=callbacks,
             log_every_n_steps=1,
             num_sanity_val_steps=0,
             check_val_every_n_epoch=self.config.general_config.training.early_stop_check_val_every_n_epoch,
             logger=TensorBoardLogger(
-                save_dir=self.runs_folder, name=tensorboard_log_name) if tensorboard_log_name is not None else False,
+                save_dir=self.runs_folder, name=tensorboard_log_name
+            )
+            if tensorboard_log_name is not None
+            else False,
         )
 
     def _create_feature_extractor_from_config(self) -> BaseFeatureExtractor:
-        """Create feature extractor based on semi-supervised config."""
+        """
+        1. Look up the feature-extractor block in ``config.architectures``.
+        2. Call :meth:`BaseFeatureExtractor.create_feature_extractor` with image size from data config.
+
+        Returns:
+            A ``BaseFeatureExtractor`` subclass instance with ``output_size`` set.
+        """
         feature_extractor_config = self.config.architectures.feature_extractors_config[
             self.config.general_config.architecture.feature_extractor_name
         ]
@@ -513,7 +701,16 @@ class BaseRunner(ABC):
         )
 
     def _create_classifier_from_config(self, input_size: int) -> BaseClassifier:
-        """Create classifier based on semi-supervised config."""
+        """
+        1. Read classifier hyperparameters from ``architectures.classifiers_config``.
+        2. Call :meth:`BaseClassifier.create_classifier` with ``output_size = num_classes``.
+
+        Args:
+            input_size: Total input dim (backbone + optional extra features).
+
+        Returns:
+            A ``BaseClassifier`` subclass with ``output_size = num_classes``.
+        """
         classifier_config = self.config.architectures.classifiers_config[
             self.config.general_config.architecture.classifier_name
         ]
@@ -523,20 +720,3 @@ class BaseRunner(ABC):
             output_size=len(self.config.label_to_name),
             classifier_config=classifier_config.to_dict(),
         )
-
-    @staticmethod
-    def create_runner(train_mode: str, run_mode: str, config: Config) -> "BaseRunner":
-        if train_mode == "supervised":
-            from supervised_runner import SupervisedRunner
-
-            return SupervisedRunner(config, run_mode)
-        elif train_mode == "semi_supervised":
-            from semi_supervised_runner import SemiSupervisedRunner
-
-            return SemiSupervisedRunner(config, run_mode)
-        elif train_mode == "self_supervised":
-            from self_supervised_runner import SelfSupervisedRunner
-
-            return SelfSupervisedRunner(config, run_mode)
-        else:
-            raise ValueError(f"Invalid train mode: {train_mode}")

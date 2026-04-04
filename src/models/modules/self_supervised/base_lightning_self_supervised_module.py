@@ -1,7 +1,10 @@
+"""Base Lightning API for self-supervised pretraining (VAE, SimCLR, …)."""
+
+from abc import ABC, abstractmethod
+from typing import Any, Callable, Dict, Iterable, Optional, Tuple
+
 import pytorch_lightning as pl
 import torch
-from typing import Any, Callable, Iterable, Tuple, Dict
-from abc import ABC, abstractmethod
 
 from models.modules.architecture.feature_extractors.base_feature_extractor import (
     BaseFeatureExtractor,
@@ -28,13 +31,27 @@ class BaseLightningSelfSupervisedModule(pl.LightningModule, ABC):
         optimizer: Callable[
             [Iterable[torch.nn.Parameter]], torch.optim.Optimizer
         ] = torch.optim.AdamW,
-        optimizer_kwargs: dict = {},
-    ):
+        optimizer_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        1. Store the backbone, optimizer class, and kwargs (defaulting ``None`` to ``{}``).
+        2. Initialize loss tracking lists.
+        3. Call ``save_hyperparameters`` for reproducibility.
+
+        Args:
+            feature_extractor: CNN trunk to pretrain.
+            optimizer: Optimizer class/factory.
+            optimizer_kwargs: Dict passed when constructing the optimizer; ``None`` → ``{}``.
+
+        Returns:
+            None.
+        """
         super().__init__()
+        if optimizer_kwargs is None:
+            optimizer_kwargs = {}
         self.feature_extractor = feature_extractor
         self.optimizer = optimizer
         self.optimizer_kwargs = optimizer_kwargs
-        # Tracking of reconstruction / pretext losses (generic)
         self.train_losses: list[float] = []
         self._train_loss_sum: float = 0.0
 
@@ -46,87 +63,118 @@ class BaseLightningSelfSupervisedModule(pl.LightningModule, ABC):
             }
         )
 
-    # ------------------------------------------------------------------
-    # Abstract API for concrete self-supervised methods
-    # ------------------------------------------------------------------
-
     @abstractmethod
     def _forward_and_loss(
         self, x: torch.Tensor
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
-        Perform a full forward pass and compute the training/validation loss.
+        1. Run the self-supervised forward pass on batch tensor ``x``.
+        2. Compute the scalar loss to minimize.
+        3. Return auxiliary scalars for logging (e.g. reconstruction, KL).
 
         Args:
-            x: Input image tensor (typically normalized raw images).
+            x: Input tensor (shape defined by subclass / dataset).
 
         Returns:
-            loss: Scalar loss tensor to backpropagate.
-            metrics: Dict of additional scalar metrics to log, e.g.
-                     {"recon_loss": ..., "kld": ...}.
+            ``(loss, metrics)`` where ``metrics`` maps names to scalar tensors.
         """
-
-    # ------------------------------------------------------------------
-    # Shared training / validation logic
-    # ------------------------------------------------------------------
+        ...
 
     @abstractmethod
     def _unpack_batch(self, batch: Any) -> torch.Tensor:
         """
-        Unpack a batch coming from `PlaqueDataset` for self-supervised learning.
+        1. Extract the tensor(s) needed for pretraining from a ``PlaqueDataset`` batch.
+        2. Return a single tensor (or stacked views) for :meth:`_forward_and_loss`.
 
-        By convention we use the normalized raw images as the target for
-        reconstruction / pretext tasks:
-          (image_paths, normalized_raw_image_tensors,
-           normalized_transformed_image_tensors, extra_features, labels)
+        Args:
+            batch: Tuple from the dataloader.
+
+        Returns:
+            Tensor passed to :meth:`_forward_and_loss`.
         """
+        ...
 
     def on_train_epoch_start(self):
+        """
+        Trigger progressive unfreezing on the backbone when implemented.
+
+        Returns:
+            None.
+        """
         if hasattr(self.feature_extractor, "check_for_unfreezing"):
             self.feature_extractor.check_for_unfreezing(self.current_epoch)
 
     def training_step(self, batch: Any, batch_idx: int):
+        """
+        1. Unpack ``batch`` via :meth:`_unpack_batch`.
+        2. Compute loss and metric dict from :meth:`_forward_and_loss`.
+        3. Accumulate loss; optionally log individual metric keys.
+
+        Args:
+            batch: Training batch.
+            batch_idx: Batch index (unused).
+
+        Returns:
+            Scalar ``loss`` for the backward pass.
+        """
         x = self._unpack_batch(batch)
         loss, metrics = self._forward_and_loss(x)
         self._train_loss_sum += float(loss.item())
 
         if len(metrics) > 1:
-            # Log base loss and any additional metrics
             for key, value in metrics.items():
                 self.log(f"train_{key}", value, prog_bar=False)
         return loss
 
     def on_train_epoch_end(self):
+        """
+        1. Average accumulated training loss over the number of training batches.
+        2. Append to ``train_losses`` and log ``train_avg_loss``.
+        3. Reset the running sum.
+
+        Returns:
+            None.
+        """
         avg_loss = self._train_loss_sum / max(1, self.trainer.num_training_batches)
         self.train_losses.append(round(float(avg_loss), 4))
         self.log("train_avg_loss", avg_loss, prog_bar=True)
         self._train_loss_sum = 0.0
 
     def configure_optimizers(self):
-        return self.optimizer(self.parameters(), **self.optimizer_kwargs)
+        """
+        Build the optimizer over all parameters of the module.
 
-    # ------------------------------------------------------------------
-    # Factory for creating self-supervised modules by name
-    # ------------------------------------------------------------------
+        Returns:
+            Optimizer instance for Lightning.
+        """
+        return self.optimizer(self.parameters(), **self.optimizer_kwargs)
 
     @classmethod
     def create_self_supervised_module(
         cls, name: str, *args, **kwargs
     ) -> "BaseLightningSelfSupervisedModule":
         """
-        Factory for self-supervised modules.
+        1. Lowercase ``name`` and map it to VAE or SimCLR implementation.
+        2. Instantiate that module with ``*args`` and ``**kwargs``.
 
-        This allows `SelfSupervisedRunner` to stay generic and simply choose
-        the self-supervised method by name (e.g. "vae", "simclr", etc.).
+        Args:
+            name: ``vae`` or ``simclr``.
+            *args: Positional args for the concrete module.
+            **kwargs: Keyword args for the concrete module.
+
+        Returns:
+            Concrete self-supervised Lightning module.
+
+        Raises:
+            ValueError: Unknown ``name``.
         """
         name = name.lower()
         if name == "vae":
             from .vae_lightning_module import LightningVAEModule
 
             return LightningVAEModule(*args, **kwargs)
-        elif name == "simclr":
+        if name == "simclr":
             from .simclr_lightning_module import LightningSimCLRModule
 
             return LightningSimCLRModule(*args, **kwargs)
-        else:
-            raise ValueError(f"Unknown self-supervised module name: {name}")
+        raise ValueError(f"Unknown self-supervised module name: {name}")

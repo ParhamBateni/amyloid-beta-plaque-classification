@@ -13,6 +13,7 @@ import dotenv
 
 dotenv.load_dotenv()
 
+
 def parse_bool(value: str | None, default: bool) -> bool:
     if value is None:
         return default

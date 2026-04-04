@@ -1,12 +1,16 @@
+"""SimCLR-style contrastive pretraining on two augmented views."""
+
+from typing import Any, Callable, Dict, Iterable, Optional, Tuple
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Tuple, Callable, Iterable, Dict
 
-from .base_lightning_self_supervised_module import BaseLightningSelfSupervisedModule
 from models.modules.architecture.feature_extractors.base_feature_extractor import (
     BaseFeatureExtractor,
 )
+
+from .base_lightning_self_supervised_module import BaseLightningSelfSupervisedModule
 
 
 class LightningSimCLRModule(BaseLightningSelfSupervisedModule):
@@ -26,11 +30,27 @@ class LightningSimCLRModule(BaseLightningSelfSupervisedModule):
         optimizer: Callable[
             [Iterable[torch.nn.Parameter]], torch.optim.Optimizer
         ] = torch.optim.AdamW,
-        optimizer_kwargs: dict = {},
+        optimizer_kwargs: Optional[Dict[str, Any]] = None,
         temperature: float = 0.5,
         projection_head_sizes: Tuple[int, int] = (128, 64),
-        projection_head_activation: str = "relu",  # or "tanh"
-    ):
+        projection_head_activation: str = "relu",
+    ) -> None:
+        """
+        1. Initialize the self-supervised base with backbone and optimizer.
+        2. Build the MLP projection head on top of ``feature_extractor.output_size``.
+        3. Save contrastive hyperparameters.
+
+        Args:
+            feature_extractor: Backbone producing features before the projection head.
+            optimizer: Optimizer class.
+            optimizer_kwargs: Optimizer kwargs.
+            temperature: Temperature for scaled dot-product logits in NT-Xent.
+            projection_head_sizes: Hidden sizes of the projection MLP.
+            projection_head_activation: ``relu`` or ``tanh`` between linear layers.
+
+        Returns:
+            None.
+        """
         super().__init__(
             feature_extractor=feature_extractor,
             optimizer=optimizer,
@@ -65,6 +85,17 @@ class LightningSimCLRModule(BaseLightningSelfSupervisedModule):
         )
 
     def xent_loss(self, z: torch.Tensor) -> torch.Tensor:
+        """
+        1. L2-normalize projected features along the channel dimension.
+        2. Form similarity logits ``z zᵀ / temperature`` with the diagonal masked.
+        3. Cross-entropy so each row's positive is its paired view index in the ``2B`` batch.
+
+        Args:
+            z: Concatenated projections from both views, shape ``(2B, D)``.
+
+        Returns:
+            Scalar NT-Xent loss.
+        """
         normalized_z = F.normalize(z, dim=1)
         logits = torch.matmul(normalized_z, normalized_z.T) / self.temperature
         mask = torch.eye(z.shape[0], device=z.device, dtype=torch.bool)
@@ -82,6 +113,16 @@ class LightningSimCLRModule(BaseLightningSelfSupervisedModule):
     def _forward_and_loss(
         self, x: torch.Tensor
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """
+        1. Project backbone features for augmented view 0 and view 1.
+        2. Concatenate along batch and compute :meth:`xent_loss`.
+
+        Args:
+            x: Tensor whose first two spatial index dimensions are two views ``[:,0]`` and ``[:,1]``.
+
+        Returns:
+            ``(loss, {"xent_loss": loss})``.
+        """
         weak_projected_features = self.projection_head(
             self.feature_extractor(x[:, 0, :, :])
         )
@@ -95,6 +136,15 @@ class LightningSimCLRModule(BaseLightningSelfSupervisedModule):
         return loss, {"xent_loss": loss}
 
     def _unpack_batch(self, batch: Any) -> torch.Tensor:
+        """
+        Return the stacked augmented views tensor for contrastive training.
+
+        Args:
+            batch: ``PlaqueDataset`` batch.
+
+        Returns:
+            ``normalized_transformed_image_tensors`` containing two views per sample.
+        """
         (
             _image_paths,
             _normalized_raw_image_tensors,

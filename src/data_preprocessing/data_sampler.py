@@ -1,12 +1,13 @@
+import argparse
+import os
+import random
+import shutil
+
 import h5py
 import numpy as np
 import pandas as pd
-import os
-from tqdm import tqdm
-import argparse
-import random
 from PIL import Image
-import shutil
+from tqdm import tqdm
 
 
 def parse_arguments():
@@ -16,16 +17,24 @@ def parse_arguments():
     parser.add_argument(
         "--unlabeled_plaques_folder", type=str, default="unlabeled_plaques"
     )
-    parser.add_argument(
-        "--unlabeled_sample_size",
-        type=int,
-        default=2000,
-        help="Number of unlabeled plaques to sample (default: 2000)",
-    ),
-    parser.add_argument("--labeled_result_folder", type=str, default="labeled_images"),
-    parser.add_argument(
-        "--unlabeled_result_folder", type=str, default="sampled_unlabeled_images"
-    ),
+    (
+        parser.add_argument(
+            "--unlabeled_sample_size",
+            type=int,
+            default=2000,
+            help="Number of unlabeled plaques to sample (default: 2000)",
+        ),
+    )
+    (
+        parser.add_argument(
+            "--labeled_result_folder", type=str, default="labeled_images"
+        ),
+    )
+    (
+        parser.add_argument(
+            "--unlabeled_result_folder", type=str, default="sampled_unlabeled_images"
+        ),
+    )
     parser.add_argument(
         "--random_seed",
         type=int,
@@ -38,18 +47,22 @@ def parse_arguments():
         default="data_table_sampled.csv",
         help="Output CSV file name (default: data_table_sampled.csv)",
     )
-    parser.add_argument(
-        "--label_file",
-        type=str,
-        default="labelfileidx.npz",
-        help="Label file name (default: labelfileidx.npz)",
-    ),
-    parser.add_argument(
-        "--label_names_file",
-        type=str,
-        default="label_names.csv",
-        help="Label names file name (default: label_names.csv)",
-    ),
+    (
+        parser.add_argument(
+            "--label_file",
+            type=str,
+            default="labelfileidx.npz",
+            help="Label file name (default: labelfileidx.npz)",
+        ),
+    )
+    (
+        parser.add_argument(
+            "--label_names_file",
+            type=str,
+            default="label_names.csv",
+            help="Label names file name (default: label_names.csv)",
+        ),
+    )
     parser.add_argument(
         "--save_images",
         type=bool,
@@ -245,7 +258,7 @@ def create_data_table(
                                 os.makedirs(image_folder_path)
 
                             image_filename = (
-                                f'{image.replace(".hdf5", "")}_index_{index}.png'
+                                f"{image.replace('.hdf5', '')}_index_{index}.png"
                             )
                             image_file_path = os.path.join(
                                 image_folder_path, image_filename
@@ -268,7 +281,7 @@ def create_data_table(
 
     # Count labeled including existing
     labeled_count = (existing_labeled_count if existing_labeled_count else 0) + len(
-        [1 for r in rows if r[4] != None and r[4] != "" and not pd.isna(r[4])]
+        [1 for r in rows if r[4] is not None and r[4] != "" and not pd.isna(r[4])]
     )
     print(f"Added {labeled_count} labeled samples")
 
@@ -336,7 +349,7 @@ def create_data_table(
                     # Save image if requested
                     if save_images:
                         image_filename = (
-                            f'{image.replace(".hdf5", "")}_index_{index}.png'
+                            f"{image.replace('.hdf5', '')}_index_{index}.png"
                         )
                         image_file_path = os.path.join(
                             data_folder, unlabeled_result_folder, image_filename
@@ -366,7 +379,7 @@ def create_data_table(
             pass
 
     if save_images:
-        print(f"Images saved to:")
+        print("Images saved to:")
         print(f"  Labeled: {data_folder}/{labeled_result_folder}")
         print(f"  Unlabeled: {data_folder}/{unlabeled_result_folder}")
 
@@ -389,7 +402,7 @@ def main():
     CLEAR_INTERMEDIATE = args.clear_intermediate
     CHECKPOINT_EVERY = args.checkpoint_every
 
-    print(f"Starting sampled data table generation...")
+    print("Starting sampled data table generation...")
     print(f"Data folder: {DATA_FOLDER}")
     print(f"Labeled plaques folder: {LABELED_PLAQUES_FOLDER}")
     print(f"Unlabeled plaques folder: {UNLABELED_PLAQUES_FOLDER}")
@@ -440,16 +453,16 @@ def main():
             df = pd.read_csv(output_path)
             print(f"\nSampled data table saved to: {output_path}")
             print(f"Final dataset shape on disk: {df.shape}")
-            print(f"Sample of the data:")
+            print("Sample of the data:")
             print(df.head())
 
             # Print some statistics
-            print(f"\nStatistics:")
+            print("\nStatistics:")
             print(f"Total plaques sampled: {len(df)}")
             print(f"Unique images: {df['Image'].nunique()}")
             print(f"Plaques with labels: {df['Label'].notna().sum()}")
             if df["Label"].notna().sum() > 0:
-                print(f"Label distribution:")
+                print("Label distribution:")
                 print(df["Label"].value_counts())
         except Exception as e:
             print(f"Warning: could not load final CSV for stats: {e}")

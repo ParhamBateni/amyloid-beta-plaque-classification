@@ -2,8 +2,9 @@
 Data loading and processing utilities.
 """
 
-import pandas as pd
 from typing import Tuple
+
+import pandas as pd
 
 
 def load_data_df(
@@ -19,10 +20,11 @@ def load_data_df(
         data_df_path: Path to the CSV file
         labeled_sample_size: Number of labeled samples to use
         unlabeled_sample_size: Number of unlabeled samples to use
-        train_mode: Training mode ('supervised' or other)
+        train_mode: ``supervised`` uses labeled data only; other modes also load unlabeled rows
 
     Returns:
-        Tuple of (labeled_data_df, unlabeled_data_df)
+        ``(labeled_data_df, unlabeled_data_df)``. For ``train_mode == "supervised"``,
+        ``unlabeled_data_df`` is an empty :class:`~pandas.DataFrame`.
     """
     data_df = pd.read_csv(data_df_path)
     labeled_data_df = data_df[data_df["Label"].notna()]

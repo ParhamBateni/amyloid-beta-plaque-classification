@@ -1,13 +1,32 @@
-import numpy as np
-from sklearn.metrics import classification_report
+"""Build and aggregate per-class classification reports as DataFrames."""
+
 from typing import List
 
+import numpy as np
 import pandas as pd
+from sklearn.metrics import classification_report
 
 
 def generate_classification_report_df(
-    all_labels: List[int], all_preds: List[int], label_names: List[str], digits: int = 3
-):
+    all_labels: List[int],
+    all_preds: List[int],
+    label_names: List[str],
+    digits: int = 3,
+) -> pd.DataFrame:
+    """
+    Build a per-class metrics table from sklearn's classification report.
+
+    Args:
+        all_labels: Ground-truth integer labels (same length as ``all_preds``).
+        all_preds: Predicted integer labels.
+        label_names: Human-readable names in label id order.
+        digits: Decimal places for rounding numeric cells.
+
+    Returns:
+        DataFrame indexed by class (and ``macro avg`` / ``weighted avg``), columns
+        are metric names (e.g. precision, recall, f1-score). The summary
+        ``accuracy`` row is removed.
+    """
     report = classification_report(
         all_labels,
         all_preds,
@@ -30,9 +49,14 @@ def generate_classification_report_df(
 
 def save_classification_report(
     classification_report_df: pd.DataFrame, folder_path: str
-):
-    """Generate and save classification report from DataFrame."""
-    # Save as CSV
+) -> None:
+    """
+    Persist a report DataFrame to CSV.
+
+    Args:
+        classification_report_df: Output of :func:`generate_classification_report_df`.
+        folder_path: Directory; file will be ``classification_report.csv``.
+    """
     classification_report_df.to_csv(f"{folder_path}/classification_report.csv")
 
 
@@ -41,8 +65,19 @@ def aggregate_reports(
     std_degree: int = 2,
     digits: int = 3,
     include_std: bool = True,
-):
-    """Aggregate classification reports from multiple runs."""
+) -> pd.DataFrame:
+    """
+    Combine multiple per-run report DataFrames into mean ± spread.
+
+    Args:
+        report_dfs: One DataFrame per fold or seed (same shape / columns).
+        std_degree: Multiplier on std for the ``±`` display (e.g. ``2`` ~ 95% if normal).
+        digits: Rounding for string cells when ``include_std`` is True.
+        include_std: If True, cells become ``"mean ± k*std"`` strings; else float mean only.
+
+    Returns:
+        Aggregated DataFrame (same index/columns as inputs).
+    """
     df_sum = report_dfs[0].copy()
     for df in report_dfs[1:]:
         df_sum += df
@@ -89,5 +124,5 @@ if __name__ == "__main__":
     df2 = generate_classification_report_df(all_labels, all_preds2, label_names)
     print(df1)
     print(df2)
-    df = aggregate_classification_reports([df1, df2])
+    df = aggregate_reports([df1, df2])
     print(df)

@@ -1,15 +1,21 @@
+"""FixMatch: pseudo-labels from weak aug, CE on strong aug above a confidence cutoff."""
+
+from typing import Any, Callable, Dict, Iterable, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any
-from .base_lightning_semi_supervised_module import BaseLightningSemiSupervisedModule
-from models.modules.architecture.feature_extractors.base_feature_extractor import BaseFeatureExtractor
+
 from models.modules.architecture.classifiers.base_classifier import BaseClassifier
-from typing import Callable, Iterable
+from models.modules.architecture.feature_extractors.base_feature_extractor import (
+    BaseFeatureExtractor,
+)
+
+from .base_lightning_semi_supervised_module import BaseLightningSemiSupervisedModule
 
 
 class FixMatchLightningModule(BaseLightningSemiSupervisedModule):
-    """FixMatch implementation for semi-supervised learning with consistency regularization."""
+    """Weak/strong view consistency with high-confidence pseudo-labels (see module docstring)."""
 
     def __init__(
         self,
@@ -18,7 +24,7 @@ class FixMatchLightningModule(BaseLightningSemiSupervisedModule):
         classifier: BaseClassifier,
         criterion: nn.Module,
         optimizer: Callable[[Iterable[torch.nn.Parameter]], torch.optim.Optimizer],
-        optimizer_kwargs: dict = {},
+        optimizer_kwargs: Optional[Dict[str, Any]] = None,
         use_extra_features: bool = False,
         use_thresholding: bool = False,
         threshold_min: float = 0.1,
@@ -29,7 +35,23 @@ class FixMatchLightningModule(BaseLightningSemiSupervisedModule):
         ramp_up_epochs: int = 10,
         ramp_up_function: str = "linear",
         pseudo_label_confidence_threshold: float = 0.95,
-    ):
+    ) -> None:
+        """
+        1. Forward all semi-supervised base kwargs to :class:`BaseLightningSemiSupervisedModule`.
+        2. Store the pseudo-label confidence cutoff for FixMatch.
+
+        Args:
+            feature_extractor, classifier, criterion, optimizer, optimizer_kwargs:
+                Same as the base class.
+            use_extra_features, use_thresholding, threshold_*:
+                Same as the base class.
+            consistency_lambda_max, consistency_loss_type, ramp_up_epochs, ramp_up_function:
+                Same as the base class.
+            pseudo_label_confidence_threshold: Minimum max-probability on weak view to keep a sample.
+
+        Returns:
+            None.
+        """
         super().__init__(
             feature_extractor=feature_extractor,
             classifier=classifier,
@@ -50,18 +72,16 @@ class FixMatchLightningModule(BaseLightningSemiSupervisedModule):
 
     def _compute_consistency_loss(self, unlabeled_batch: Any) -> torch.Tensor:
         """
-        Compute FixMatch consistency loss.
+        1. Forward weak augmented images; softmax to probabilities and argmax pseudo-labels.
+        2. Forward strong augmented images to logits.
+        3. Keep samples whose max weak probability ≥ ``pseudo_label_confidence_threshold``.
+        4. Build masked targets and call :meth:`_get_consistency_loss` (typically cross-entropy).
 
-        FixMatch enforces consistency between weakly- and strongly-augmented versions of the same unlabeled image.
-        The key idea is:
-        1. Pass the weakly-augmented images through the model and obtain predicted probabilities.
-        2. For each sample, if the max softmax probability is above a confidence threshold, treat the predicted class as a "pseudo label".
-        3. Pass the strongly-augmented images through the model and use the "pseudo label" as a target.
-        4. Consistency loss is calculated only on those samples where the model is confident (above threshold),
-           typically using cross-entropy between the strong prediction and the weak pseudo-label.
+        Args:
+            unlabeled_batch: ``PlaqueDataset`` batch with two augmented views stacked in the channel dimension.
 
-        This encourages the model to produce the same predictions on challenging augmentations,
-        leveraging unlabeled data effectively.
+        Returns:
+            Scalar consistency loss; zero tensor if no batch or no confident samples.
         """
         if unlabeled_batch is None:
             return torch.tensor(0.0, device=self.device)

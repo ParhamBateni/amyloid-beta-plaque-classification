@@ -1,18 +1,21 @@
-import torch
-import pandas as pd
-import os
-from typing import Dict, Optional, Tuple, Union
+"""PyTorch ``Dataset`` classes for plaque crops, transforms, normalization, and optional preloading."""
 
-from torchvision import transforms as trf
-from PIL import Image
-from tqdm import tqdm
+import os
 import sys
-from typing import List
+from typing import Dict, List, Optional, Tuple, Union
+
 import matplotlib.pyplot as plt
+import pandas as pd
+import torch
+from PIL import Image
+from torchvision import transforms as trf
 from torchvision.transforms.functional import to_pil_image
+from tqdm import tqdm
 
 
 class PlaqueDatasetAugmented(torch.utils.data.Dataset):
+    """Wraps several :class:`PlaqueDataset` clones plus one raw-tensor dataset for augmented indexing."""
+
     def __init__(
         self,
         data_df: pd.DataFrame,
@@ -29,6 +32,27 @@ class PlaqueDatasetAugmented(torch.utils.data.Dataset):
         downscaling_method: str = "bilinear",
         number_of_augmentations: int = 1,
     ):
+        """
+        1. Build ``number_of_augmentations`` dataset clones sharing the same transforms pipeline.
+        2. Append one extra dataset using only ``ToTensor`` for a non-augmented branch.
+
+        Args:
+            data_df: Metadata table with image keys and labels.
+            data_folder_path: Root directory containing class subfolders of PNGs.
+            name_to_label: Mapping from string label to integer class id.
+            transforms: Single ``Compose`` or list of compose pipelines (one clone per augmentation).
+            preload: Whether underlying datasets preload rows into memory.
+            description: Progress-bar label for preloading.
+            normalize_data: If True, apply mean/std normalization in children.
+            normalize_mean, normalize_std: Per-channel stats tensors (shape ``[C]``).
+            use_extra_features: Pass through to children for Roundness/Area z-scores.
+            downscaled_image_size: Resize target ``(H, W)``.
+            downscaling_method: ``bilinear`` or ``nearest``.
+            number_of_augmentations: How many augmented dataset instances to stack.
+
+        Returns:
+            None.
+        """
         self.transforms = transforms
         self.number_of_augmentations = number_of_augmentations
         self.plaque_datasets = [
@@ -68,9 +92,23 @@ class PlaqueDatasetAugmented(torch.utils.data.Dataset):
         )
 
     def __len__(self):
+        """
+        Returns:
+            ``(number_of_augmentations + 1)`` times the length of one underlying dataset.
+        """
         return len(self.plaque_datasets[0]) * (self.number_of_augmentations + 1)
 
     def __getitem__(self, idx: int):
+        """
+        1. Map flat ``idx`` to a dataset index and within-dataset sample index.
+        2. Return path, first transformed view tensor, extras, and label.
+
+        Args:
+            idx: Linear index over the virtual concatenation of child datasets.
+
+        Returns:
+            Tuple ``(image_path, tensor, extra_features, label)``.
+        """
         dataset_idx = idx // (len(self.plaque_datasets[0]))
         transform_idx = idx % (len(self.plaque_datasets[0]))
         image_path, _, normalized_transformed_image_tensors, extra_features, label = (
@@ -84,8 +122,9 @@ class PlaqueDatasetAugmented(torch.utils.data.Dataset):
         )
 
 
-# PlaqueDataset
 class PlaqueDataset(torch.utils.data.Dataset):
+    """Loads plaque PNGs from disk, resizes, optionally preloads, and returns multi-view tensors."""
+
     def __init__(
         self,
         data_df: pd.DataFrame,
@@ -102,6 +141,27 @@ class PlaqueDataset(torch.utils.data.Dataset):
         downscaled_image_size: Tuple[int, int] = (224, 224),
         downscaling_method: str = "bilinear",
     ):
+        """
+        1. Store dataframe path, label maps, transform list, and normalization settings.
+        2. If ``preload``, iterate all rows and cache :meth:`_process_row` outputs.
+
+        Args:
+            data_df: Table with ``Label``, ``Image``, ``Index``, and optional shape features.
+            data_folder_path: Directory containing one subfolder per label name.
+            name_to_label: Label string to class index; may be empty if filled externally.
+            transforms: Single ``Compose`` or list of composes (multi-view).
+            preload: Cache processed tensors in RAM.
+            apply_transforms_on_the_fly: When preloaded, re-apply transforms each ``__getitem__`` if True.
+            description: tqdm description during preload.
+            normalize_data: Enable :meth:`_normalize_tensor` when stats are set.
+            normalize_mean, normalize_std: Per-channel stats; if any missing, normalization is skipped.
+            use_extra_features: Standardize ``Roundness`` and ``Area`` into a 2-D vector.
+            downscaled_image_size: Target ``(H, W)`` after resize.
+            downscaling_method: PIL resize filter name.
+
+        Returns:
+            None.
+        """
         self.data_df = data_df
         self.data_folder_path = data_folder_path
         # build the name_to_label dictionary if it is not provided impute the labels using scikit-learn
@@ -142,11 +202,25 @@ class PlaqueDataset(torch.utils.data.Dataset):
                 )
 
     def __len__(self):
+        """
+        Returns:
+            Number of rows in ``data_df``.
+        """
         return len(self.data_df)
 
     def __getitem__(
         self, idx: int
-    ) -> Tuple[str, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int]:
+    ) -> Tuple[str, torch.Tensor, torch.Tensor, torch.Tensor, int]:
+        """
+        1. Load from cache or call :meth:`_process_row` for index ``idx``.
+        2. If preloaded and ``apply_transforms_on_the_fly``, re-stack transformed views from the raw tensor.
+
+        Args:
+            idx: Row index into ``data_df``.
+
+        Returns:
+            ``(image_path, normalized_raw_image_tensor, normalized_transformed_image_tensors, extra_features, label)``.
+        """
         if self.preload and self._preloaded_data is not None:
             (
                 image_path,
@@ -183,7 +257,9 @@ class PlaqueDataset(torch.utils.data.Dataset):
             label,
         )
 
-    def _process_row(self, idx: int, apply_transform: bool = True) -> Tuple[
+    def _process_row(
+        self, idx: int, apply_transform: bool = True
+    ) -> Tuple[
         str,
         torch.Tensor,
         torch.Tensor,
@@ -191,6 +267,19 @@ class PlaqueDataset(torch.utils.data.Dataset):
         torch.Tensor,
         int,
     ]:
+        """
+        1. Resolve the PNG path from the dataframe row.
+        2. Load, resize, and tensorize the image; optionally apply each transform and stack.
+        3. Normalize the raw tensor; build standardized extra features when enabled.
+        4. Map the string label to an integer (or ``-1`` if unknown).
+
+        Args:
+            idx: Row index in ``data_df``.
+            apply_transform: If False, return an empty transform stack tensor.
+
+        Returns:
+            ``(path, raw_tensor, normalized_raw, transformed_stack, extra_features, label)``.
+        """
         row = self.data_df.iloc[idx]
         image_path = os.path.join(
             self.data_folder_path,
@@ -251,6 +340,16 @@ class PlaqueDataset(torch.utils.data.Dataset):
         )
 
     def _normalize_tensor(self, image_tensor: torch.Tensor) -> torch.Tensor:
+        """
+        1. If normalization is disabled or stats are missing, return ``image_tensor`` unchanged.
+        2. Otherwise subtract ``mean`` and divide by ``std`` with broadcast shape ``[C,1,1]``.
+
+        Args:
+            image_tensor: ``(C, H, W)`` float tensor.
+
+        Returns:
+            Normalized tensor with same shape and dtype-promoted stats.
+        """
         if (
             not self.normalize_data
             or self.normalize_mean is None
@@ -400,8 +499,8 @@ if __name__ == "__main__":
         sys.path.insert(0, src_path)
 
     print("Running plaque_dataset.py visualization sample")
-    from utils.data_utils import load_data_df
     from models.config import Config
+    from utils.data_utils import load_data_df
 
     config = Config.load_config("configs", "supervised")
 
@@ -454,13 +553,14 @@ if __name__ == "__main__":
     #     plt.show()
     #     i+=8
     import time
+
     t0 = time.time()
     ds = PlaqueDataset(
         sample_df,
         labeled_data_folder_path,
         name_to_label=config.name_to_label,
         transforms=aug_transform,
-        preload = True,
+        preload=True,
         description="labeled images (aug)",
         normalize_data=False,
     )
@@ -500,10 +600,10 @@ if __name__ == "__main__":
         )
         axes[i, 0].imshow(normalized_raw_image_tensor)
         axes[i, 0].set_yticks([112], [f"Label: {label}"])
-        axes[i, 0].set_title(f"Raw")
+        axes[i, 0].set_title("Raw")
         axes[i, 1].imshow(normalized_transformed_image_tensor)
         axes[i, 1].set_yticks([112], [f"Label: {label}"])
-        axes[i, 1].set_title(f"Transformed")
+        axes[i, 1].set_title("Transformed")
         for ax in axes[i]:
             ax.set_xticks([])
     plt.tight_layout()

@@ -1,13 +1,17 @@
 from abc import ABC, abstractmethod
+from typing import Any, Dict
+
 import torch
 import torch.nn as nn
-from typing import Any, Dict
 
 
 class BaseFeatureExtractor(ABC, nn.Module):
     """
-    Base class for all feature extractors.
-    All feature extractors should inherit from this class.
+    Abstract CNN backbone: maps ``(B, 3, H, W)`` images to a fixed-size feature vector.
+
+    Subclasses set ``self.feature_extractor`` to an ``nn.Module`` and implement
+    :meth:`forward`. Optional progressive unfreezing is supported via
+    :meth:`check_for_unfreezing`.
     """
 
     def __init__(
@@ -17,7 +21,24 @@ class BaseFeatureExtractor(ABC, nn.Module):
         freeze: bool = False,
         unfreeze_last_n_blocks: int = 0,
         unfreeze_after_n_epochs: int = 0,
-    ):
+    ) -> None:
+        """
+        Store backbone I/O metadata and progressive-unfreeze settings used by Lightning.
+
+        Args:
+            input_dim: Spatial size ``H`` (and usually ``W``) of square inputs, or as
+                required by the concrete model (see subclass docs).
+            output_size: Dimensionality of the vector returned by :meth:`forward`
+                (feeds the classifier head).
+            freeze: If True, disable gradients on all backbone parameters after build.
+            unfreeze_last_n_blocks: When unfreezing, number of trailing Conv/Linear/
+                Sequential blocks (from the end) to set ``requires_grad=True``.
+            unfreeze_after_n_epochs: Epoch index (0-based) when unfreezing starts;
+                0 disables time-based unfreezing.
+
+        Returns:
+            None.
+        """
         super().__init__()
         self.freeze = freeze
         self.unfreeze_last_n_blocks = unfreeze_last_n_blocks
@@ -30,7 +51,11 @@ class BaseFeatureExtractor(ABC, nn.Module):
 
     def post_init(self) -> None:
         """
-        Post-initialization hook.
+        1. Assume ``self.feature_extractor`` is assigned by the subclass.
+        2. If ``freeze`` is True, set ``requires_grad=False`` on all trunk parameters.
+
+        Returns:
+            None.
         """
         if self.freeze:
             for param in self.feature_extractor.parameters():
@@ -38,7 +63,11 @@ class BaseFeatureExtractor(ABC, nn.Module):
 
     def freeze_feature_extractor(self) -> None:
         """
-        Freeze the feature extractor.
+        1. Set ``self.frozen`` to True.
+        2. Disable gradients on every parameter of ``self.feature_extractor``.
+
+        Returns:
+            None.
         """
         self.frozen = True
         for param in self.feature_extractor.parameters():
@@ -46,7 +75,17 @@ class BaseFeatureExtractor(ABC, nn.Module):
 
     def check_for_unfreezing(self, current_epoch: int) -> None:
         """
-        Check if the feature extractor should be unfreezed.
+        1. If still frozen and ``current_epoch`` reached ``unfreeze_after_n_epochs``,
+           mark the trunk unfrozen.
+        2. Walk children of ``self.feature_extractor`` from the end; for up to
+           ``unfreeze_last_n_blocks`` Conv/Linear/Sequential blocks, set
+           ``requires_grad=True``.
+
+        Args:
+            current_epoch: Lightning ``current_epoch``.
+
+        Returns:
+            None.
         """
         if (
             self.frozen
@@ -71,30 +110,16 @@ class BaseFeatureExtractor(ABC, nn.Module):
     @abstractmethod
     def forward(self, x_image: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the feature extractor.
+        1. Run the trunk on ``x_image``.
+        2. Return a batch of feature vectors for the classifier head.
 
         Args:
-            x_image: Image tensor of shape (batch_size, channels, height, width)
+            x_image: Float tensor ``(batch, 3, H, W)``.
 
         Returns:
-            Extracted features tensor
+            Tensor ``(batch, output_size)`` unless a subclass documents otherwise.
         """
-
-    # def get_output_size(self) -> int:
-    #     """
-    #     Get the flattened output feature dimension of the extractor.
-
-    #     Returns:
-    #         Integer number of features after the extractor's forward pass.
-    #     """
-    #     with torch.no_grad():
-    #         dummy = torch.zeros(
-    #             size=(1, 3, self.input_dim, self.input_dim), dtype=torch.float32
-    #         )
-    #         output = self.forward(dummy)
-    #         if output.dim() > 2:
-    #             output = output.view(output.size(0), -1)
-    #         return int(output.shape[1])
+        ...
 
     @staticmethod
     def create_feature_extractor(
@@ -102,22 +127,45 @@ class BaseFeatureExtractor(ABC, nn.Module):
         input_dim: int,
         feature_extractor_config: Dict[str, Any],
     ) -> "BaseFeatureExtractor":
+        """
+        1. Match ``feature_extractor_name`` to a registered implementation.
+        2. Merge ``input_dim`` and ``feature_extractor_config`` into that class's constructor.
+        3. Return the instantiated backbone.
+
+        Args:
+            feature_extractor_name: ``simple_cnn``, ``h1_optimus``, or a name starting
+                with ``resnet``.
+            input_dim: Passed to the constructor (image size / config-dependent).
+            feature_extractor_config: Extra kwargs for the concrete class.
+
+        Returns:
+            A concrete :class:`BaseFeatureExtractor` subclass instance.
+
+        Raises:
+            ValueError: Unknown ``feature_extractor_name``.
+        """
         if feature_extractor_name == "simple_cnn":
             from .simple_cnn_feature_extractor import SimpleCNNFeatureExtractor
 
             return SimpleCNNFeatureExtractor(input_dim, **feature_extractor_config)
-        elif feature_extractor_name.startswith("resnet"):
+        if feature_extractor_name.startswith("resnet"):
             from .resnet_feature_extractor import ResNetFeatureExtractor
 
             return ResNetFeatureExtractor(
                 input_dim, model_name=feature_extractor_name, **feature_extractor_config
             )
-        else:
-            raise ValueError(f"Feature extractor {feature_extractor_name} not found")
+        if feature_extractor_name == "h1_optimus":
+            from .h1_optimus_feature_extractor import H1OptimusFeatureExtractor
+
+            return H1OptimusFeatureExtractor(input_dim, **feature_extractor_config)
+        raise ValueError(f"Feature extractor {feature_extractor_name} not found")
 
     def to_dict(self) -> Dict[str, Any]:
         """
-        Convert the feature extractor to a dictionary.
+        Collect sizes, freeze flags, and a string representation of the trunk for logging.
+
+        Returns:
+            Dict with ``input_dim``, ``output_size``, freeze settings, and trunk repr.
         """
         return {
             "input_dim": self.input_dim,

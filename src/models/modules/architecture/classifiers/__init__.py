@@ -1,3 +1,5 @@
+"""Linear and MLP classification heads."""
+
 from .base_classifier import BaseClassifier
 from .linear_classifier import LinearClassifier
 from .mlp_classifier import MLPClassifier
