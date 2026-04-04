@@ -20,6 +20,8 @@ from models.modules.supervised.lightning_supervised_module import (
     LightningSupervisedModule,
 )
 
+import optuna
+
 
 class SupervisedRunner(BaseRunner):
     """Runner for fully supervised plaque classification experiments."""
@@ -256,10 +258,6 @@ class SupervisedRunner(BaseRunner):
             threshold_max=self.config.general_config.training.threshold_max,
             threshold_steps=self.config.general_config.training.threshold_steps,
         )
-        # Log the model architecture to the log file
-        self.log_file_writer.write("Model architecture:")
-        self.log_file_writer.write(str(summarize(pl_module)))
-        self.log_file_writer.flush()
 
         data_module = SupervisedPlaqueLightningDataModule(
             train_labeled_plaque_dataloader=train_labeled_dataloader,
@@ -287,12 +285,9 @@ class SupervisedRunner(BaseRunner):
 
         return pl_module.test_labels, pl_module.test_preds
 
-    def _cross_validate(self, labeled_kfold: StratifiedKFold):
+    def _cross_validate(self):
         """
         Stratified CV: outer split is train+val vs test per fold; val carved from train.
-
-        Args:
-            labeled_kfold: Splitter on ``self.labeled_data_df["Label"]``.
 
         Returns:
             ``(kfold_test_labels, kfold_test_preds)`` — one list per fold.
@@ -305,6 +300,11 @@ class SupervisedRunner(BaseRunner):
         kfold_test_preds = []
         best_val_loss = float("inf")
         best_trainer = None
+        labeled_kfold = StratifiedKFold(
+            n_splits=round(1 / self.config.general_config.training.test_size),
+            shuffle=True,
+            random_state=self.config.general_config.system.random_seed,
+        )
         for fold, (train_idx, test_idx) in tqdm(
             enumerate(
                 labeled_kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])
@@ -323,7 +323,7 @@ class SupervisedRunner(BaseRunner):
                 random_state=self.config.general_config.system.random_seed,
             )
             trainer = self._create_base_trainer(
-                tensorboard_log_name=f"tensorboard_cv_{fold}"
+                tensorboard_log_name=f"cv_{fold}"
             )
             test_labels, test_preds = self._run_single_experiment(
                 train_labeled_data_df=train_labeled_data_df,
@@ -350,14 +350,11 @@ class SupervisedRunner(BaseRunner):
 
         return kfold_test_labels, kfold_test_preds
 
-    def _hyperparameter_tuning(self, labeled_kfold: StratifiedKFold):
+    def _hyperparameter_tuning(self):
         """
         Inner CV for Optuna: each fold trains on a train subset and validates.
 
         No test set: ``test_labeled_data_df`` is empty; metrics come from ``trainer.callback_metrics``.
-
-        Args:
-            labeled_kfold: Same splitter as outer CV (reused for HPO folds).
 
         Returns:
             Three parallel lists (one scalar per fold), aligned with fold order:
@@ -367,6 +364,11 @@ class SupervisedRunner(BaseRunner):
         kfold_val_losses = []
         kfold_val_f1s = []
         kfold_val_accuracies = []
+        labeled_kfold = StratifiedKFold(
+            n_splits=round(1 / self.config.general_config.training.test_size),
+            shuffle=True,
+            random_state=self.config.general_config.system.random_seed,
+        )
         for fold, (train_idx, _test_idx) in tqdm(
             enumerate(labeled_kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
             total=labeled_kfold.n_splits,
@@ -382,7 +384,7 @@ class SupervisedRunner(BaseRunner):
                 stratify=train_labeled_data_df["Label"],
                 random_state=self.config.general_config.system.random_seed,
             )
-            trainer = self._create_base_trainer()
+            trainer = self._create_base_trainer(tensorboard_log_name=f"fold_{fold}")
             self._run_single_experiment(
                 train_labeled_data_df=train_labeled_data_df,
                 val_labeled_data_df=val_labeled_data_df,
@@ -417,3 +419,15 @@ class SupervisedRunner(BaseRunner):
             kfold_val_accuracies,
             kfold_val_f1s,
         )
+
+    def _apply_extra_tuning_params(self, trial: optuna.Trial) -> None:
+        """
+        Sample hyperparameters declared under ``<method>_config.hyperparameter_tuning``.
+
+        Args:
+            trial: Current Optuna trial.
+
+        Returns:
+            None (mutates ``self.config.supervised.<method>_config`` in place).
+        """
+        pass

@@ -181,7 +181,6 @@ class BaseRunner(ABC):
         )
         # TensorBoard under runs_folder/single; checkpoints unless debug_mode
         trainer = self._create_base_trainer(
-            save_checkpoint=not self.config.general_config.system.debug_mode,
             tensorboard_log_name="tensorboard",
         )
         if self._type() == "supervised":
@@ -232,25 +231,20 @@ class BaseRunner(ABC):
             classification_report_df, folder_path=self.runs_folder
         )
 
-    def cross_validate(self, labeled_kfold: Optional[StratifiedKFold] = None) -> None:
+    def cross_validate(self) -> None:
         """
         1. Build or reuse a stratified K-fold splitter on ``labeled_data_df``.
         2. Call subclass ``_cross_validate`` for per-fold predictions.
         3. Aggregate confusion matrices and classification reports and save plots/CSV.
 
-        Args:
-            labeled_kfold: Optional pre-built splitter. If ``None``, uses
-                ``n_splits = round(1 / test_size)`` from config (same as HPO).
-
         Returns:
             None.
         """
-        if labeled_kfold is None:
-            labeled_kfold = StratifiedKFold(
-                n_splits=round(1 / self.config.general_config.training.test_size),
-                shuffle=True,
-                random_state=self.config.general_config.system.random_seed,
-            )
+        labeled_kfold = StratifiedKFold(
+            n_splits=round(1 / self.config.general_config.training.test_size),
+            shuffle=True,
+            random_state=self.config.general_config.system.random_seed,
+        )
         kfold_test_labels, kfold_test_preds = self._cross_validate(labeled_kfold)
 
         confusion_matrices = []
@@ -310,12 +304,6 @@ class BaseRunner(ABC):
             os.remove(self.log_file_path)
         self.log_file_writer = None
         self.log_file_path = None
-
-        labeled_kfold = StratifiedKFold(
-            n_splits=round(1 / self.config.general_config.training.test_size),
-            shuffle=True,
-            random_state=self.config.general_config.system.random_seed,
-        )
 
         def objective(trial: optuna.Trial, study: optuna.Study) -> float:
             """
@@ -442,6 +430,27 @@ class BaseRunner(ABC):
                     trial.set_user_attr("repeated_trial", True)
                     with open(os.path.join(trial_folder, "params.json"), "w") as f:
                         json.dump(trial.params, f, indent=2)
+                    self._log_hparams_summary(
+                        trial_folder=trial_folder,
+                        hparams=trial.params,
+                        metrics={
+                            "hp_metric": t.user_attrs.get("mean_f1", float("nan")),
+                            "mean_val_f1": t.user_attrs.get("mean_f1", float("nan")),
+                            "std_val_f1": t.user_attrs.get("cv_std_f1", float("nan")),
+                            "mean_val_accuracy": t.user_attrs.get(
+                                "mean_accuracy", float("nan")
+                            ),
+                            "std_val_accuracy": t.user_attrs.get(
+                                "cv_std_accuracy", float("nan")
+                            ),
+                            "mean_val_loss": t.user_attrs.get(
+                                "mean_loss", float("nan")
+                            ),
+                            "std_val_loss": t.user_attrs.get(
+                                "cv_std_loss", float("nan")
+                            ),
+                        },
+                    )
                     with open(
                         os.path.join(trial_folder, "cached_from_trial.txt"), "w"
                     ) as f:
@@ -457,7 +466,7 @@ class BaseRunner(ABC):
                 kfold_val_losses,
                 kfold_val_accuracies,
                 kfold_val_f1s,
-            ) = copy_runner._hyperparameter_tuning(labeled_kfold)
+            ) = copy_runner._hyperparameter_tuning()
 
             mean_accuracy = sum(kfold_val_accuracies) / len(kfold_val_accuracies)
             cv_std_accuracy = (
@@ -482,6 +491,19 @@ class BaseRunner(ABC):
             ) ** 0.5
             trial.set_user_attr("cv_std_loss", cv_std)
             trial.set_user_attr("mean_loss", mean_loss)
+            self._log_hparams_summary(
+                trial_folder=trial_folder,
+                hparams=trial.params,
+                metrics={
+                    "hp_metric": mean_f1,
+                    "mean_val_f1": mean_f1,
+                    "std_val_f1": cv_std_f1,
+                    "mean_val_accuracy": mean_accuracy,
+                    "std_val_accuracy": cv_std_accuracy,
+                    "mean_val_loss": mean_loss,
+                    "std_val_loss": cv_std,
+                },
+            )
             return mean_f1
 
         study = run_optuna_study(
@@ -496,8 +518,9 @@ class BaseRunner(ABC):
         for key, value in study.best_trial.params.items():
             set_nested(self.config, key, value)
 
-        self.cross_validate(labeled_kfold)
+        self.cross_validate()
 
+    @abstractmethod
     def _apply_extra_tuning_params(self, trial: optuna.Trial) -> None:
         """
         Hook for extra Optuna suggestions (e.g. SimCLR temperature, FixMatch threshold).
@@ -512,6 +535,34 @@ class BaseRunner(ABC):
             Default is a no-op. Semi- and self-supervised runners override this.
         """
         pass
+
+    @staticmethod
+    def _log_hparams_summary(
+        trial_folder: str,
+        hparams: Dict[str, Any],
+        metrics: Dict[str, float],
+    ) -> None:
+        """Write one TensorBoard HParams summary run for an Optuna trial."""
+        logger = TensorBoardLogger(
+            save_dir=os.path.join(trial_folder, "tensorboard"),
+            name="summary",
+            version="metrics",
+            default_hp_metric=False,
+        )
+        logger.log_hyperparams(
+            params={
+                key: value
+                if isinstance(value, (bool, int, float, str))
+                else str(value)
+                for key, value in hparams.items()
+            },
+            metrics={key: float(value) for key, value in metrics.items()},
+        )
+        logger.save()
+        experiment = logger.experiment
+        if hasattr(experiment, "flush"):
+            experiment.flush()
+        logger.finalize("success")
 
     @abstractmethod
     def _type(self) -> str:
@@ -646,7 +697,7 @@ class BaseRunner(ABC):
         # Progress bar
         if self.log_file_path is not None:
             setup_pytorch_lightning_logging(self.log_file_path)
-            callbacks.append(FileTQDMProgressBar(file_path=self.log_file_path))
+            callbacks.append(FileTQDMProgressBar(file_path=self.log_file_path, refresh_rate = 10))
         else:
             callbacks.append(RichProgressBar(leave=True))
 
@@ -666,6 +717,12 @@ class BaseRunner(ABC):
                 )
             )
 
+        logger = None
+        if tensorboard_log_name is not None:
+            os.makedirs(os.path.join(self.runs_folder, "tensorboard", tensorboard_log_name), exist_ok=True)
+            logger = TensorBoardLogger(
+                save_dir=os.path.join(self.runs_folder, "tensorboard"), name=tensorboard_log_name
+            )
         return pl.Trainer(
             accelerator="gpu" if torch.cuda.is_available() else "cpu",
             devices=1,
@@ -676,11 +733,8 @@ class BaseRunner(ABC):
             log_every_n_steps=1,
             num_sanity_val_steps=0,
             check_val_every_n_epoch=self.config.general_config.training.early_stop_check_val_every_n_epoch,
-            logger=TensorBoardLogger(
-                save_dir=self.runs_folder, name=tensorboard_log_name
-            )
-            if tensorboard_log_name is not None
-            else False,
+            logger=logger,
+            enable_model_summary=False,
         )
 
     def _create_feature_extractor_from_config(self) -> BaseFeatureExtractor:

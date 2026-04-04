@@ -94,12 +94,9 @@ class SelfSupervisedRunner(BaseRunner):
             finetuning_trainer=finetuning_trainer,
         )
 
-    def _cross_validate(self, labeled_kfold: StratifiedKFold):
+    def _cross_validate(self):
         """
         Pretrain the backbone **once** on all unlabeled data, then CV only over finetuning.
-
-        Args:
-            labeled_kfold: Stratified splitter on labeled rows.
 
         Returns:
             ``(kfold_test_labels, kfold_test_preds)``.
@@ -113,9 +110,15 @@ class SelfSupervisedRunner(BaseRunner):
         best_val_loss = float("inf")
         best_trainer = None
 
+        labeled_kfold = StratifiedKFold(
+            n_splits=round(1 / self.config.general_config.training.test_size),
+            shuffle=True,
+            random_state=self.config.general_config.system.random_seed,
+        )
+
         pretraining_trainer = self._create_base_trainer(
             save_checkpoint=False,
-            tensorboard_log_name="tensorboard_pretraining",
+            tensorboard_log_name="pretraining",
             max_epochs=self.config.self_supervised.self_supervised_config.pretraining.num_epochs,
         )
 
@@ -143,7 +146,7 @@ class SelfSupervisedRunner(BaseRunner):
             )
 
             finetuning_trainer = self._create_base_trainer(
-                tensorboard_log_name=f"tensorboard_cv_{fold}"
+                tensorboard_log_name=f"cv_{fold}"
             )
 
             test_labels, test_preds = self._run_supervised_finetuning(
@@ -173,12 +176,9 @@ class SelfSupervisedRunner(BaseRunner):
 
         return kfold_test_labels, kfold_test_preds
 
-    def _hyperparameter_tuning(self, labeled_kfold: StratifiedKFold):
+    def _hyperparameter_tuning(self):
         """
         Single shared pretraining pass, then k finetuning folds for Optuna metrics.
-
-        Args:
-            labeled_kfold: Same k-fold definition as outer CV.
 
         Returns:
             ``(kfold_val_losses, kfold_val_accuracies, kfold_val_f1s)`` — one scalar per
@@ -190,10 +190,16 @@ class SelfSupervisedRunner(BaseRunner):
         kfold_val_losses = []
         kfold_val_accuracies = []
         kfold_val_f1s = []
+        labeled_kfold = StratifiedKFold(
+            n_splits=round(1 / self.config.general_config.training.test_size),
+            shuffle=True,
+            random_state=self.config.general_config.system.random_seed,
+        )
 
         pretraining_trainer = self._create_base_trainer(
             save_checkpoint=False,
             max_epochs=self.config.self_supervised.self_supervised_config.pretraining.num_epochs,
+            tensorboard_log_name="pretraining",
         )
         pretrained_feature_extractor = self._run_pretraining(
             unlabeled_data_df=self.unlabeled_data_df,
@@ -214,7 +220,9 @@ class SelfSupervisedRunner(BaseRunner):
                 stratify=train_labeled_data_df["Label"],
                 random_state=self.config.general_config.system.random_seed,
             )
-            finetuning_trainer = self._create_base_trainer()
+            finetuning_trainer = self._create_base_trainer(
+                tensorboard_log_name=f"fold_{fold}"
+            )
             self._run_supervised_finetuning(
                 feature_extractor=pretrained_feature_extractor,
                 train_labeled_data_df=train_labeled_data_df,
@@ -627,10 +635,6 @@ class SelfSupervisedRunner(BaseRunner):
             threshold_max=self.config.general_config.training.threshold_max,
             threshold_steps=self.config.general_config.training.threshold_steps,
         )
-        # Log the model architecture for the finetuning stage
-        self.log_file_writer.write("Model architecture:")
-        self.log_file_writer.write(str(summarize(pl_module)))
-        self.log_file_writer.flush()
 
         data_module = SupervisedPlaqueLightningDataModule(
             train_labeled_plaque_dataloader=train_labeled_dataloader,

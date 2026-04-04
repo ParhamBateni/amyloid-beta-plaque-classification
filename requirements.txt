@@ -11,6 +11,7 @@ scikit-learn
 # Visualization
 matplotlib
 tensorboard
+tensorflow
 
 # PyTorch Lightning ecosystem
 pytorch-lightning

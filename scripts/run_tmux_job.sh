@@ -4,8 +4,10 @@
 SESSION_NAME="job_$(date +%Y%m%d_%H%M%S)"
 LOG_DIR="logs"
 SCRIPT="src/main.py"
-CONDA_ENV="main"
+CONDA_ENV="/venv/pascal"
+CONDA_SH="/opt/miniforge3/etc/profile.d/conda.sh"
 START_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
+ENABLE_EMAIL=false
 
 # ---- ARGUMENTS PASSED TO THIS SCRIPT ----
 ARGS="$@"
@@ -17,7 +19,7 @@ LOG_FILE="$LOG_DIR/$(date +%Y-%m-%d_%H-%M-%S).log"
 # ---- START TMUX SESSION ----
 tmux new-session -d -s "$SESSION_NAME" "
 
-source ~/miniconda3/etc/profile.d/conda.sh
+source $CONDA_SH
 conda activate $CONDA_ENV
 
 python $SCRIPT $ARGS 2>&1 | tee $LOG_FILE
@@ -25,6 +27,7 @@ python $SCRIPT $ARGS 2>&1 | tee $LOG_FILE
 status=\${PIPESTATUS[0]}
 end_time=\$(date '+%Y-%m-%d %H:%M:%S')
 
+if [ "$ENABLE_EMAIL" = true ]; then
 python scripts/send_job_email.py \
   --session-name \"$SESSION_NAME\" \
   --args-text \"$ARGS\" \
@@ -32,11 +35,12 @@ python scripts/send_job_email.py \
   --start-time \"$START_TIME\" \
   --end-time \"\$end_time\" \
   --log-file \"$LOG_FILE\"
-email_status=\$?
-if [ \$email_status -eq 0 ]; then
-  printf 'Email notification: SENT\n' | tee -a $LOG_FILE
-else
-  printf 'Email notification: FAILED (sender exit code: %s)\n' \"\$email_status\" | tee -a $LOG_FILE
+  email_status=\$?
+  if [ \$email_status -eq 0 ]; then
+    printf 'Email notification: SENT\n' | tee -a $LOG_FILE
+  else
+    printf 'Email notification: FAILED (sender exit code: %s)\n' \"\$email_status\" | tee -a $LOG_FILE
+  fi
 fi
 
 if [ \$status -eq 0 ]; then

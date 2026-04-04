@@ -54,9 +54,12 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
         self.model_name = model_name
         self.pretrained = pretrained
         self.dropout_rate = dropout_rate
-        # Load pretrained ResNet model
+        # Use the torchvision weights API to avoid deprecated `pretrained=` warnings.
         try:
-            self.resnet_model = getattr(models, model_name)(pretrained=self.pretrained)
+            weights = None
+            if self.pretrained:
+                weights = models.get_model_weights(model_name).DEFAULT
+            self.resnet_model = getattr(models, model_name)(weights=weights)
         except AttributeError:
             raise ValueError(f"Unsupported ResNet model: {model_name}")
 
