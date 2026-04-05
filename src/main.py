@@ -39,7 +39,7 @@ def main() -> None:
     parser.add_argument(
         "--run_mode",
         type=str,
-        default="hyperparameter_tuning",
+        default="single",
         choices=["single", "cross_validate", "hyperparameter_tuning"],
         help="Whether to run one split, k-fold CV, or Optuna HPO",
     )
@@ -51,7 +51,7 @@ def main() -> None:
     )
 
     args = parser.parse_args()
-    config = Config.load_config(args.config_dir, args.train_mode)
+    config = Config.load_config(args.config_dir, args.train_mode, args.run_mode)
 
     print_log(
         "Config: " + str(config),

@@ -76,13 +76,6 @@ class LightningSimCLRModule(BaseLightningSelfSupervisedModule):
                 projection_layers.append(activation_fn)
 
         self.projection_head = nn.Sequential(*projection_layers)
-        self.save_hyperparameters(
-            {
-                "temperature": temperature,
-                "projection_head_sizes": projection_head_sizes,
-                "projection_head_activation": projection_head_activation,
-            }
-        )
 
     def xent_loss(self, z: torch.Tensor) -> torch.Tensor:
         """

@@ -110,14 +110,6 @@ class LightningVAEModule(BaseLightningSelfSupervisedModule):
             ),  # *2; shape should now match (C, H, W)
         )
 
-        self.save_hyperparameters(
-            {
-                "latent_dim": self.latent_dim,
-                "beta": self.beta,
-                "reconstruction_loss": self.reconstruction_loss,
-            }
-        )
-
     def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         1. Run ``x`` through ``feature_extractor``.

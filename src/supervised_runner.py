@@ -7,7 +7,6 @@ import pandas as pd
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-from pytorch_lightning.utilities.model_summary import summarize
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from torchvision import transforms as trf
 from tqdm import tqdm

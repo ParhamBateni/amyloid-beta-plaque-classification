@@ -72,15 +72,22 @@ class BaseRunner(ABC):
         self.runs_folder = os.path.join(
             config.general_config.data.runs_folder, self.run_mode, self._type()
         )
-        if run_mode != "hyperparameter_tuning":
-            # Normal runs: isolate outputs per job / timestamp (``config.run_id``).
-            self.runs_folder = os.path.join(self.runs_folder, config.run_id)
+
+        from self_supervised_runner import SelfSupervisedRunner
+        from semi_supervised_runner import SemiSupervisedRunner
+        if run_mode!="hyperparameter_tuning":
+            method = None
+            if isinstance(self, SemiSupervisedRunner):
+                method = self.config.semi_supervised.semi_supervised_config.model_name
+            elif isinstance(self, SelfSupervisedRunner):
+                method = self.config.self_supervised.self_supervised_config.pretraining_method
+            if method is not None:
+                self.runs_folder = os.path.join(self.runs_folder, method, self.config.general_config.architecture.feature_extractor_name, config.run_id)
+            else:
+                self.runs_folder = os.path.join(self.runs_folder, self.config.general_config.architecture.feature_extractor_name, config.run_id)
         else:
             # HPO: shared base folder so Optuna SQLite and trials stay under one tree;
             # disambiguate by SSL method(s) and backbone name when multiple are configured.
-            from self_supervised_runner import SelfSupervisedRunner
-            from semi_supervised_runner import SemiSupervisedRunner
-
             if isinstance(self, SemiSupervisedRunner):
                 methods = self.config.semi_supervised.semi_supervised_config.hyperparameter_tuning.model_name
             elif isinstance(self, SelfSupervisedRunner):

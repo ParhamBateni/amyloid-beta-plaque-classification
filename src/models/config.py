@@ -23,14 +23,14 @@ class Config:
         Returns:
             None.
         """
-        self.config = {
+        self._config = {
             k: Config(v) if isinstance(v, dict) else v for k, v in config.items()
         }
 
     def __setattr__(self, name: str, value: Any) -> None:
         """
-        1. If ``name == "config"``, assign on the object dict (bootstrap).
-        2. Otherwise write ``value`` into ``self.config[name]``.
+        1. If ``name.startswith("_")``, assign on the object dict (bootstrap).
+        2. Otherwise write ``value`` into ``self._config[name]``.
 
         Args:
             name: Attribute / key name.
@@ -39,14 +39,14 @@ class Config:
         Returns:
             None.
         """
-        if name == "config":
+        if name.startswith("_"):
             super().__setattr__(name, value)
         else:
-            self.config[name] = value
+            self._config[name] = value
 
     def __getattr__(self, name: str) -> Any:
         """
-        Resolve ``name`` from ``self.config``.
+        Resolve ``name`` from ``self._config``.
 
         Args:
             name: Requested attribute (must exist in ``self.config``).
@@ -55,7 +55,7 @@ class Config:
             Stored value (possibly a nested ``Config``).
 
         Raises:
-            AttributeError: For dunder names, missing ``config``, or unknown keys
+            AttributeError: For dunder names, missing ``_config``, or unknown keys
                 (avoids infinite recursion with ``copy.deepcopy``).
         """
         # Ignore Python's special/magic attributes – signal "not found" quickly
@@ -63,19 +63,18 @@ class Config:
             raise AttributeError(f"Config has no attribute {name}")
 
         # During object construction / copying, 'config' might not be set yet
-        cfg = self.__dict__.get("config", None)
+        cfg = self.__dict__.get("_config", None)
         if cfg is None or name not in cfg:
             raise AttributeError(f"Config has no attribute {name}")
 
         return cfg[name]
 
-    def _indented_str(self, indent: int = 1, keep_cv_grid_search: bool = False) -> str:
+    def _indented_str(self, indent: int = 1) -> str:
         """
-        Pretty-print the tree for ``config.txt`` / ``__str__``.
+        Pretty-print the tree for ``_config.txt`` / ``__str__``.
 
         Args:
             indent: Tab depth for nesting.
-            keep_cv_grid_search: If False, omit ``cv_grid_search`` keys from output.
 
         Returns:
             Multi-line brace-wrapped string representation.
@@ -87,10 +86,10 @@ class Config:
                 [
                     (
                         f"{str(k)}: {str(v) if not isinstance(v, Config) else v._indented_str(indent + 1)}"
-                        if (k != "cv_grid_search" or keep_cv_grid_search) and k != ""
+                        if k != ""
                         else ""
                     )
-                    for k, v in self.config.items()
+                    for k, v in self._config.items()
                 ]
             )
             + "\n"
@@ -101,41 +100,41 @@ class Config:
     def __str__(self) -> str:
         """
         Returns:
-            Pretty string from :meth:`_indented_str` with ``cv_grid_search`` omitted.
+            Pretty string from :meth:`_indented_str`.
         """
-        return self._indented_str(keep_cv_grid_search=False)
+        return self._indented_str()
 
     def __getitem__(self, key: str) -> Any:
         """
         Args:
-            key: Top-level key in ``self.config``.
+            key: Top-level key in ``self._config``.
 
         Returns:
             Stored value (possibly nested ``Config``).
         """
-        return self.config[key]
+        return self._config[key]
 
     def __setitem__(self, key: str, value: Any) -> None:
         """
         Args:
-            key: Key to set in ``self.config``.
+            key: Key to set in ``self._config``.
             value: Value to assign.
 
         Returns:
             None.
         """
-        self.config[key] = value
+        self._config[key] = value
 
     def __delattr__(self, name: str) -> None:
         """
         Args:
-            name: Key to delete from ``self.config`` if it exists.
+            name: Key to delete from ``self._config`` if it exists.
 
         Returns:
             None.
         """
         try:
-            del self.config[name]
+            del self._config[name]
         except Exception:
             pass
 
@@ -147,21 +146,35 @@ class Config:
             JSON-serializable nested dictionary.
         """
         result = {}
-        for k, v in self.config.items():
+        for k, v in self._config.items():
             if isinstance(v, Config):
                 result[k] = v.to_dict()
             else:
                 result[k] = v
         return result
 
-    def save_config(self, folder_path: str, keep_cv_grid_search: bool = False) -> None:
+    def remove_key_recursive(self, key_to_remove: str) -> None:
+        """
+        Remove ``key_to_remove`` from this config and all nested ``Config`` objects.
+
+        Args:
+            key_to_remove: Key name to delete everywhere in the tree.
+
+        Returns:
+            None.
+        """
+        self._config.pop(key_to_remove, None)
+        for value in self._config.values():
+            if isinstance(value, Config):
+                value.remove_key_recursive(key_to_remove)
+
+    def save_config(self, folder_path: str) -> None:
         """
         1. Render this tree via :meth:`_indented_str`.
         2. Write ``config.txt`` under ``folder_path``.
 
         Args:
             folder_path: Run or trial directory.
-            keep_cv_grid_search: Passed through to :meth:`_indented_str`.
 
         Returns:
             None.
@@ -170,11 +183,11 @@ class Config:
             os.path.join(folder_path, "config.txt"),
             "w",
         ) as f:
-            config_str = self._indented_str(keep_cv_grid_search=keep_cv_grid_search)
+            config_str = self._indented_str()
             f.write(config_str)
 
     @staticmethod
-    def load_config(config_dir: str, train_mode: str = "") -> "Config":
+    def load_config(config_dir: str, train_mode: str , run_mode: str) -> "Config":
         """
         1. Recursively merge JSON files under ``config_dir`` into a nested ``Config``.
         2. Attach ``label_to_name``, ``name_to_label``, ``run_id``, and ``system.device``.
@@ -184,7 +197,7 @@ class Config:
             config_dir: Root such as ``configs/`` (nested folders allowed).
             train_mode: ``supervised``, ``semi_supervised``, or ``self_supervised``;
                 drops unused top-level sections to avoid accidental access.
-
+            run_mode: ``single``, ``cross_validate``, or ``hyperparameter_tuning``.
         Returns:
             Fully built :class:`Config` with ``label_to_name``, ``name_to_label``,
             ``run_id``, ``system.device``, and mode-specific sections only.
@@ -258,13 +271,72 @@ class Config:
         elif train_mode == "semi_supervised":
             del config.supervised
             del config.self_supervised
+            if run_mode == "hyperparameter_tuning":
+                selected_methods = (
+                    config.semi_supervised.semi_supervised_config.hyperparameter_tuning.model_name
+                )
+                for method in list(config.semi_supervised._config.keys()):
+                    if (
+                        method != "semi_supervised_config"
+                        and method.replace("_config", "") not in selected_methods
+                    ):
+                        config.semi_supervised._config.pop(method, None)
+            else:
+                selected_method = config.semi_supervised.semi_supervised_config.model_name
+                for method in list(config.semi_supervised._config.keys()):
+                    if (
+                        method != "semi_supervised_config"
+                        and method != f"{selected_method}_config"
+                    ):
+                        config.semi_supervised._config.pop(method, None)
         elif train_mode == "self_supervised":
             del config.supervised
             del config.semi_supervised
+            if run_mode == "hyperparameter_tuning":
+                selected_methods = (
+                    config.self_supervised.self_supervised_config.hyperparameter_tuning.pretraining_method
+                )
+                for method in list(config.self_supervised._config.keys()):
+                    if (
+                        method != "self_supervised_config"
+                        and method.replace("_config", "") not in selected_methods
+                    ):
+                        config.self_supervised._config.pop(method, None)
+            else:
+                selected_method = (
+                    config.self_supervised.self_supervised_config.pretraining_method
+                )
+                for method in list(config.self_supervised._config.keys()):
+                    if (
+                        method != "self_supervised_config"
+                        and method != f"{selected_method}_config"
+                    ):
+                        config.self_supervised._config.pop(method, None)
+
+        if run_mode != "hyperparameter_tuning":
+            config.remove_key_recursive("hyperparameter_tuning")
+
+            # Drop unused architecture sections so invalid keys fail fast
+            feature_extractors_config = getattr(config.architectures.feature_extractors_config, config.general_config.architecture.feature_extractor_name)
+            classifiers_config = getattr(config.architectures.classifiers_config, config.general_config.architecture.classifier_name)
+            config.architectures.feature_extractors_config = Config({})
+            config.architectures.classifiers_config = Config({})
+            setattr(config.architectures.feature_extractors_config, config.general_config.architecture.feature_extractor_name, feature_extractors_config)
+            setattr(config.architectures.classifiers_config, config.general_config.architecture.classifier_name, classifiers_config)
+
+
+        else:
+            for fe in config.architectures.feature_extractors_config.to_dict():
+                if fe not in config.general_config.architecture.hyperparameter_tuning.feature_extractor_name:
+                    config.architectures.feature_extractors_config._config.pop(fe, None)
+            for cl in config.architectures.classifiers_config.to_dict():
+                if cl not in config.general_config.architecture.hyperparameter_tuning.classifier_name:
+                    config.architectures.classifiers_config._config.pop(cl, None)
+
         return config
 
 
 if __name__ == "__main__":
-    config = Config.load_config("configs", "supervised")
+    config = Config.load_config("configs", "self_supervised", "hyperparameter_tuning")
     print(config._indented_str())
-    # config.save_config(folder_path="test")
+    config.save_config(folder_path=".")

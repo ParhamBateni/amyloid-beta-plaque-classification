@@ -1,0 +1,126 @@
+{
+	architectures: {
+		classifiers_config: {
+			linear: {
+				hyperparameter_tuning: {
+					
+				}
+			}
+		},
+		feature_extractors_config: {
+			resnet18: {
+				output_size: 32,
+				pretrained: True,
+				freeze: False,
+				unfreeze_after_n_epochs: 20,
+				unfreeze_last_n_blocks: 1,
+				dropout_rate: 0.1,
+				hyperparameter_tuning: {
+					output_size: [32, 64, 128],
+					dropout_rate: [0.1, 0.2, 0.3],
+					freeze: [True, False]
+				}
+			}
+		}
+	},
+	self_supervised: {
+		self_supervised_config: {
+			pretraining_method: vae,
+			pretraining: {
+				skip_if_checkpoint_exists: False,
+				checkpoint_path: checkpoints,
+				num_epochs: 50,
+				learning_rate: 1e-05,
+				weight_decay: 1e-05
+			},
+			hyperparameter_tuning: {
+				pretraining_method: ['vae'],
+				pretraining: {
+					skip_if_checkpoint_exists: [False],
+					num_epochs: [10, 25, 50],
+					learning_rate: [1e-05, 5e-05, 0.0001],
+					weight_decay: [1e-06, 1e-05]
+				}
+			}
+		},
+		vae_config: {
+			latent_dim: 32,
+			beta: 0.75,
+			reconstruction_loss: mse,
+			hyperparameter_tuning: {
+				latent_dim: [32, 64],
+				beta: [0.5, 0.75, 1.0]
+			}
+		}
+	},
+	general_config: {
+		data: {
+			data_folder: data,
+			data_table_file_name: data_table_sampled_10k.csv,
+			labeled_data_folder: labeled_images,
+			unlabeled_data_folder: sampled_unlabeled_images,
+			runs_folder: runs,
+			downscaled_image_size: [224, 224],
+			downscaling_method: bilinear,
+			unlabeled_sample_size: 10000,
+			labeled_sample_size: 1000000000.0,
+			preload: False,
+			apply_transforms_on_the_fly: False,
+			normalize_data: True,
+			normalize_mean: [0.485, 0.456, 0.406],
+			normalize_std: [0.229, 0.224, 0.225],
+			use_extra_features: True,
+			extra_feature_dim: 2,
+			number_of_augmentations: 3
+		},
+		architecture: {
+			feature_extractor_name: resnet18,
+			classifier_name: linear,
+			hyperparameter_tuning: {
+				feature_extractor_name: ['resnet18'],
+				classifier_name: ['linear']
+			}
+		},
+		training: {
+			test_size: 0.2,
+			val_size: 0.1,
+			num_workers: 4,
+			pin_memory: True,
+			persistent_workers: True,
+			batch_size: 32,
+			num_epochs: 200,
+			optimizer: adamw,
+			learning_rate: 1e-05,
+			weight_decay: 1e-06,
+			early_stop: 2,
+			early_stop_check_val_every_n_epoch: 5,
+			checkpoint_monitor: val_f1,
+			use_thresholding: True,
+			threshold_min: 0,
+			threshold_max: 1,
+			threshold_steps: 5,
+			hyperparemeter_tuning_val_size: 0.2
+		},
+		system: {
+			debug_mode: True,
+			log_mode: True,
+			random_seed: 44,
+			seed_everything: True,
+			device: cuda
+		},
+		hyperparameter_tuning: {
+			architecture: {
+				feature_extractor_name: ['resnet18'],
+				classifier_name: ['linear']
+			},
+			training: {
+				learning_rate: [1e-05, 5e-05, 0.0001],
+				batch_size: [32, 64],
+				weight_decay: [1e-06, 1e-05]
+			}
+		}
+	},
+	label_to_name: {0: 'Diffuse', 1: 'Cored', 2: 'Compact', 3: 'Coarse', 4: 'CAA', 5: 'Subpial', 6: 'OtherAB', 7: 'UndefAB', 8: 'NonAB'},
+	name_to_label: {'CAA': 4, 'Coarse': 3, 'Compact': 2, 'Cored': 1, 'Diffuse': 0, 'NonAB': 8, 'OtherAB': 6, 'Subpial': 5, 'UndefAB': 7},
+	run_id: 20260405_150259
+}

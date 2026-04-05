@@ -55,14 +55,6 @@ class BaseLightningSelfSupervisedModule(pl.LightningModule, ABC):
         self.train_losses: list[float] = []
         self._train_loss_sum: float = 0.0
 
-        self.save_hyperparameters(
-            {
-                "feature_extractor": feature_extractor.to_dict(),
-                "optimizer": str(optimizer),
-                "optimizer_kwargs": optimizer_kwargs,
-            }
-        )
-
     @abstractmethod
     def _forward_and_loss(
         self, x: torch.Tensor

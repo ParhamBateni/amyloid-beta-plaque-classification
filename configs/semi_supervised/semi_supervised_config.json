@@ -1,5 +1,5 @@
 {
-    "model_name": "pi_model",
+    "model_name": "mean_teacher",
     "training": {
         "consistency_lambda_max": 0.1,
         "consistency_loss_type": "cross_entropy",
