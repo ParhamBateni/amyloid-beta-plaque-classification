@@ -3,6 +3,7 @@
 import os
 
 import numpy as np
+import optuna
 import pandas as pd
 import pytorch_lightning as pl
 import torch
@@ -18,8 +19,6 @@ from models.data.plaque_dataset import PlaqueDatasetAugmented
 from models.modules.supervised.lightning_supervised_module import (
     LightningSupervisedModule,
 )
-
-import optuna
 
 
 class SupervisedRunner(BaseRunner):
@@ -264,6 +263,9 @@ class SupervisedRunner(BaseRunner):
             test_labeled_plaque_dataloader=test_labeled_dataloader,
         )
         trainer.fit(pl_module, datamodule=data_module)
+        trainer._val_losses_history = pl_module.val_losses.copy()
+        trainer._val_accuracies_history = pl_module.val_accuracies.copy()
+        trainer._val_f1s_history = pl_module.val_f1s.copy()
 
         checkpoint_path = os.path.join(
             self.runs_folder, "checkpoints", "best_model.ckpt"
@@ -321,9 +323,7 @@ class SupervisedRunner(BaseRunner):
                 stratify=train_labeled_data_df["Label"],
                 random_state=self.config.general_config.system.random_seed,
             )
-            trainer = self._create_base_trainer(
-                tensorboard_log_name=f"cv_{fold}"
-            )
+            trainer = self._create_base_trainer(tensorboard_log_name=f"cv_{fold}")
             test_labels, test_preds = self._run_single_experiment(
                 train_labeled_data_df=train_labeled_data_df,
                 val_labeled_data_df=val_labeled_data_df,
@@ -331,7 +331,7 @@ class SupervisedRunner(BaseRunner):
                 trainer=trainer,
             )
 
-            val_losses = trainer.callback_metrics["val_loss"]
+            val_losses = trainer._val_losses_history
 
             # Track the best model across all folds
             if val_losses[-1] < best_val_loss:
@@ -369,12 +369,13 @@ class SupervisedRunner(BaseRunner):
             random_state=self.config.general_config.system.random_seed,
         )
         for fold, (train_idx, _test_idx) in tqdm(
-            enumerate(labeled_kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
+            enumerate(
+                labeled_kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])
+            ),
             total=labeled_kfold.n_splits,
             desc="Hyperparameter tuning",
             file=self.log_file_writer,
         ):
-
             train_labeled_data_df = self.labeled_data_df.iloc[train_idx]
             train_labeled_data_df, val_labeled_data_df = train_test_split(
                 train_labeled_data_df,
@@ -390,9 +391,9 @@ class SupervisedRunner(BaseRunner):
                 test_labeled_data_df=pd.DataFrame(),
                 trainer=trainer,
             )
-            val_f1s = trainer.callback_metrics["val_f1"]
-            val_losses = trainer.callback_metrics["val_loss"]
-            val_accuracies = trainer.callback_metrics["val_accuracy"]
+            val_f1s = trainer._val_f1s_history
+            val_losses = trainer._val_losses_history
+            val_accuracies = trainer._val_accuracies_history
 
             # The following part ensures that the best model performance based on the checkpoint monitor is used for the hyperparameter tuning
             index = -1

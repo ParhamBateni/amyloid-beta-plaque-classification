@@ -8,7 +8,6 @@ import pandas as pd
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-from pytorch_lightning.utilities.model_summary import summarize
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from torchvision import transforms as trf
 from tqdm import tqdm
@@ -308,6 +307,9 @@ class SemiSupervisedRunner(BaseRunner):
             unlabeled_plaque_dataloader=unlabeled_dataloader,
         )
         trainer.fit(pl_module, datamodule=data_module)
+        trainer._val_losses_history = pl_module.val_losses.copy()
+        trainer._val_accuracies_history = pl_module.val_accuracies.copy()
+        trainer._val_f1s_history = pl_module.val_f1s.copy()
 
         checkpoint_path = os.path.join(
             self.runs_folder, "checkpoints", "best_model.ckpt"
@@ -366,9 +368,7 @@ class SemiSupervisedRunner(BaseRunner):
                 random_state=self.config.general_config.system.random_seed,
             )
 
-            trainer = self._create_base_trainer(
-                tensorboard_log_name=f"cv_{fold}"
-            )
+            trainer = self._create_base_trainer(tensorboard_log_name=f"cv_{fold}")
             test_labels, test_preds = self._run_single_experiment(
                 train_labeled_data_df=train_labeled_data_df,
                 val_labeled_data_df=val_labeled_data_df,
@@ -377,7 +377,7 @@ class SemiSupervisedRunner(BaseRunner):
                 trainer=trainer,
             )
 
-            val_losses = trainer.callback_metrics["val_loss"]
+            val_losses = trainer._val_losses_history
             # Track the best model across all folds
             if val_losses[-1] < best_val_loss:
                 best_val_loss = val_losses[-1]
@@ -415,7 +415,9 @@ class SemiSupervisedRunner(BaseRunner):
             random_state=self.config.general_config.system.random_seed,
         )
         for fold, (train_idx, _test_idx) in tqdm(
-            enumerate(labeled_kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
+            enumerate(
+                labeled_kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])
+            ),
             total=labeled_kfold.n_splits,
             desc="Hyperparameter tuning",
             file=self.log_file_writer,
@@ -437,10 +439,10 @@ class SemiSupervisedRunner(BaseRunner):
                 unlabeled_data_df=self.unlabeled_data_df,
                 trainer=trainer,
             )
-            val_f1s = trainer.callback_metrics["val_f1"]
-            val_losses = trainer.callback_metrics["val_loss"]
-            val_accuracies = trainer.callback_metrics["val_accuracy"]
-            
+            val_f1s = trainer._val_f1s_history
+            val_losses = trainer._val_losses_history
+            val_accuracies = trainer._val_accuracies_history
+
             # The following part ensures that the best model performance based on the checkpoint monitor is used for the hyperparameter tuning
             index = -1
             if self.config.general_config.training.checkpoint_monitor == "val_f1":
@@ -487,7 +489,10 @@ class SemiSupervisedRunner(BaseRunner):
             ht = method_cfg.hyperparameter_tuning
             ht_dict = ht.to_dict() if hasattr(ht, "to_dict") else dict(ht)
             for k, v in suggest_params_from_dict(
-                trial, ht_dict, f"semi_supervised_{method}"
+                trial, ht_dict, f"semi_supervised.{method}_config"
             ).items():
-                param_name = k.replace(f"semi_supervised_{method}.", "")
-                getattr(self.config.semi_supervised, f"{method}_config")[param_name] = v
+                setattr(
+                    self.config.semi_supervised[method + "_config"],
+                    k.replace(f"semi_supervised.{method}_config.", ""),
+                    v,
+                )

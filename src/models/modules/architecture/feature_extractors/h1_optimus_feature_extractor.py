@@ -6,9 +6,8 @@ cached credentials or env token). Output embedding size is fixed at **1536** per
 pretrained checkpoint.
 """
 
-import torch
-import torch.nn as nn
 import timm
+import torch
 from huggingface_hub import login
 
 from .base_feature_extractor import BaseFeatureExtractor

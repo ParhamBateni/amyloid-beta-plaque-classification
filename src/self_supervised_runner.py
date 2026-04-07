@@ -10,7 +10,6 @@ import pandas as pd
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-from pytorch_lightning.utilities.model_summary import summarize
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from torchvision import transforms as trf
 from tqdm import tqdm
@@ -32,7 +31,6 @@ from models.modules.supervised.lightning_supervised_module import (
     LightningSupervisedModule,
 )
 from utils.hyperparameter_tuning_utils import suggest_params_from_dict
-from utils.logging_utils import FileTQDMProgressBar, setup_pytorch_lightning_logging
 
 
 class SelfSupervisedRunner(BaseRunner):
@@ -48,7 +46,9 @@ class SelfSupervisedRunner(BaseRunner):
     def __init__(self, config: Config, run_mode: str) -> None:
         super().__init__(config, run_mode)
 
-    def load_model_from_checkpoint(self, checkpoint_path: str, device: str = "cpu") -> None:
+    def load_model_from_checkpoint(
+        self, checkpoint_path: str, device: str = "cpu"
+    ) -> None:
         """Load pretrained backbone + classifier (not implemented)."""
         pass
 
@@ -157,7 +157,7 @@ class SelfSupervisedRunner(BaseRunner):
                 finetuning_trainer=finetuning_trainer,
             )
 
-            val_losses = finetuning_trainer.callback_metrics["val_loss"]
+            val_losses = finetuning_trainer._val_losses_history
 
             # Track the best model across all folds based on final val loss
             if val_losses[-1] < best_val_loss:
@@ -166,7 +166,6 @@ class SelfSupervisedRunner(BaseRunner):
 
             kfold_test_labels.append(test_labels)
             kfold_test_preds.append(test_preds)
-
 
         if not self.config.general_config.system.debug_mode:
             checkpoint_path = os.path.join(
@@ -207,7 +206,9 @@ class SelfSupervisedRunner(BaseRunner):
         )
 
         for fold, (train_idx, _test_idx) in tqdm(
-            enumerate(labeled_kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])),
+            enumerate(
+                labeled_kfold.split(self.labeled_data_df, self.labeled_data_df["Label"])
+            ),
             total=labeled_kfold.n_splits,
             desc="Hyperparameter tuning",
             file=self.log_file_writer,
@@ -230,10 +231,10 @@ class SelfSupervisedRunner(BaseRunner):
                 test_labeled_data_df=pd.DataFrame(),
                 finetuning_trainer=finetuning_trainer,
             )
-            val_f1s = finetuning_trainer.callback_metrics["val_f1"]
-            val_losses = finetuning_trainer.callback_metrics["val_loss"]
-            val_accuracies = finetuning_trainer.callback_metrics["val_accuracy"]
-            
+            val_f1s = finetuning_trainer._val_f1s_history
+            val_losses = finetuning_trainer._val_losses_history
+            val_accuracies = finetuning_trainer._val_accuracies_history
+
             # The following part ensures that the best model performance based on the checkpoint monitor is used for the hyperparameter tuning
             index = -1
             if self.config.general_config.training.checkpoint_monitor == "val_f1":
@@ -642,6 +643,9 @@ class SelfSupervisedRunner(BaseRunner):
             test_labeled_plaque_dataloader=test_labeled_dataloader,
         )
         finetuning_trainer.fit(pl_module, datamodule=data_module)
+        finetuning_trainer._val_losses_history = pl_module.val_losses.copy()
+        finetuning_trainer._val_accuracies_history = pl_module.val_accuracies.copy()
+        finetuning_trainer._val_f1s_history = pl_module.val_f1s.copy()
 
         checkpoint_path = os.path.join(
             self.runs_folder, "checkpoints", "best_model.ckpt"
@@ -683,7 +687,10 @@ class SelfSupervisedRunner(BaseRunner):
             ht = method_cfg.hyperparameter_tuning
             ht_dict = ht.to_dict() if hasattr(ht, "to_dict") else dict(ht)
             for k, v in suggest_params_from_dict(
-                trial, ht_dict, f"ssl_{method}"
+                trial, ht_dict, f"self_supervised.{method}_config"
             ).items():
-                param_name = k.replace(f"ssl_{method}.", "")
-                getattr(self.config.self_supervised, f"{method}_config")[param_name] = v
+                setattr(
+                    self.config.self_supervised[method + "_config"],
+                    k.replace(f"self_supervised.{method}_config.", ""),
+                    v,
+                )

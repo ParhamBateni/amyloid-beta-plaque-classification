@@ -7,7 +7,7 @@ SCRIPT="src/main.py"
 CONDA_ENV="/venv/pascal"
 CONDA_SH="/opt/miniforge3/etc/profile.d/conda.sh"
 START_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
-ENABLE_EMAIL=false
+ENABLE_EMAIL=true
 
 # ---- ARGUMENTS PASSED TO THIS SCRIPT ----
 ARGS="$@"

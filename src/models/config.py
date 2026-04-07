@@ -187,7 +187,7 @@ class Config:
             f.write(config_str)
 
     @staticmethod
-    def load_config(config_dir: str, train_mode: str , run_mode: str) -> "Config":
+    def load_config(config_dir: str, train_mode: str, run_mode: str) -> "Config":
         """
         1. Recursively merge JSON files under ``config_dir`` into a nested ``Config``.
         2. Attach ``label_to_name``, ``name_to_label``, ``run_id``, and ``system.device``.
@@ -272,9 +272,7 @@ class Config:
             del config.supervised
             del config.self_supervised
             if run_mode == "hyperparameter_tuning":
-                selected_methods = (
-                    config.semi_supervised.semi_supervised_config.hyperparameter_tuning.model_name
-                )
+                selected_methods = config.semi_supervised.semi_supervised_config.hyperparameter_tuning.model_name
                 for method in list(config.semi_supervised._config.keys()):
                     if (
                         method != "semi_supervised_config"
@@ -282,7 +280,9 @@ class Config:
                     ):
                         config.semi_supervised._config.pop(method, None)
             else:
-                selected_method = config.semi_supervised.semi_supervised_config.model_name
+                selected_method = (
+                    config.semi_supervised.semi_supervised_config.model_name
+                )
                 for method in list(config.semi_supervised._config.keys()):
                     if (
                         method != "semi_supervised_config"
@@ -293,9 +293,7 @@ class Config:
             del config.supervised
             del config.semi_supervised
             if run_mode == "hyperparameter_tuning":
-                selected_methods = (
-                    config.self_supervised.self_supervised_config.hyperparameter_tuning.pretraining_method
-                )
+                selected_methods = config.self_supervised.self_supervised_config.hyperparameter_tuning.pretraining_method
                 for method in list(config.self_supervised._config.keys()):
                     if (
                         method != "self_supervised_config"
@@ -317,20 +315,39 @@ class Config:
             config.remove_key_recursive("hyperparameter_tuning")
 
             # Drop unused architecture sections so invalid keys fail fast
-            feature_extractors_config = getattr(config.architectures.feature_extractors_config, config.general_config.architecture.feature_extractor_name)
-            classifiers_config = getattr(config.architectures.classifiers_config, config.general_config.architecture.classifier_name)
+            feature_extractors_config = getattr(
+                config.architectures.feature_extractors_config,
+                config.general_config.architecture.feature_extractor_name,
+            )
+            classifiers_config = getattr(
+                config.architectures.classifiers_config,
+                config.general_config.architecture.classifier_name,
+            )
             config.architectures.feature_extractors_config = Config({})
             config.architectures.classifiers_config = Config({})
-            setattr(config.architectures.feature_extractors_config, config.general_config.architecture.feature_extractor_name, feature_extractors_config)
-            setattr(config.architectures.classifiers_config, config.general_config.architecture.classifier_name, classifiers_config)
-
+            setattr(
+                config.architectures.feature_extractors_config,
+                config.general_config.architecture.feature_extractor_name,
+                feature_extractors_config,
+            )
+            setattr(
+                config.architectures.classifiers_config,
+                config.general_config.architecture.classifier_name,
+                classifiers_config,
+            )
 
         else:
             for fe in config.architectures.feature_extractors_config.to_dict():
-                if fe not in config.general_config.architecture.hyperparameter_tuning.feature_extractor_name:
+                if (
+                    fe
+                    not in config.general_config.architecture.hyperparameter_tuning.feature_extractor_name
+                ):
                     config.architectures.feature_extractors_config._config.pop(fe, None)
             for cl in config.architectures.classifiers_config.to_dict():
-                if cl not in config.general_config.architecture.hyperparameter_tuning.classifier_name:
+                if (
+                    cl
+                    not in config.general_config.architecture.hyperparameter_tuning.classifier_name
+                ):
                     config.architectures.classifiers_config._config.pop(cl, None)
 
         return config

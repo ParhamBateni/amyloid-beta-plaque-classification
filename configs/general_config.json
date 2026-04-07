@@ -51,7 +51,8 @@
         "debug_mode": true,
         "log_mode": true,
         "random_seed": 44,
-        "seed_everything": true
+        "seed_everything": true,
+        "tensorboard_log": false
     },
     "hyperparameter_tuning": {
         "architecture": {

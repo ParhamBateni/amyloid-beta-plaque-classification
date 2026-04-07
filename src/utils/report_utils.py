@@ -87,9 +87,7 @@ def aggregate_reports(
         df_sum_sq += (df - df_mean) ** 2
     df_std = np.sqrt(df_sum_sq / len(report_dfs))
     if include_std:
-        df_aggregated = pd.DataFrame(
-            df_mean, columns=df_mean.columns, index=df_mean.index, dtype=str
-        )
+        df_aggregated = pd.DataFrame(index=df_mean.index, columns=df_mean.columns)
         for i in range(len(df_aggregated)):
             for j in range(len(df_aggregated.columns)):
                 df_aggregated.iloc[i, j] = (
@@ -98,9 +96,7 @@ def aggregate_reports(
                     + str(np.round(std_degree * df_std.iloc[i, j], digits))
                 )
     else:
-        df_aggregated = pd.DataFrame(
-            df_mean, columns=df_mean.columns, index=df_mean.index, dtype=float
-        )
+        df_aggregated = df_mean.copy()
     return df_aggregated
 
 

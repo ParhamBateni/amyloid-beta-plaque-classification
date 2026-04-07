@@ -75,16 +75,26 @@ class BaseRunner(ABC):
 
         from self_supervised_runner import SelfSupervisedRunner
         from semi_supervised_runner import SemiSupervisedRunner
-        if run_mode!="hyperparameter_tuning":
+
+        if run_mode != "hyperparameter_tuning":
             method = None
             if isinstance(self, SemiSupervisedRunner):
                 method = self.config.semi_supervised.semi_supervised_config.model_name
             elif isinstance(self, SelfSupervisedRunner):
                 method = self.config.self_supervised.self_supervised_config.pretraining_method
             if method is not None:
-                self.runs_folder = os.path.join(self.runs_folder, method, self.config.general_config.architecture.feature_extractor_name, config.run_id)
+                self.runs_folder = os.path.join(
+                    self.runs_folder,
+                    method,
+                    self.config.general_config.architecture.feature_extractor_name,
+                    config.run_id,
+                )
             else:
-                self.runs_folder = os.path.join(self.runs_folder, self.config.general_config.architecture.feature_extractor_name, config.run_id)
+                self.runs_folder = os.path.join(
+                    self.runs_folder,
+                    self.config.general_config.architecture.feature_extractor_name,
+                    config.run_id,
+                )
         else:
             # HPO: shared base folder so Optuna SQLite and trials stay under one tree;
             # disambiguate by SSL method(s) and backbone name when multiple are configured.
@@ -247,12 +257,7 @@ class BaseRunner(ABC):
         Returns:
             None.
         """
-        labeled_kfold = StratifiedKFold(
-            n_splits=round(1 / self.config.general_config.training.test_size),
-            shuffle=True,
-            random_state=self.config.general_config.system.random_seed,
-        )
-        kfold_test_labels, kfold_test_preds = self._cross_validate(labeled_kfold)
+        kfold_test_labels, kfold_test_preds = self._cross_validate()
 
         confusion_matrices = []
         for test_labels, test_preds in zip(kfold_test_labels, kfold_test_preds):
@@ -305,7 +310,8 @@ class BaseRunner(ABC):
             None.
         """
         ht_base = self.runs_folder
-
+        log_file_writer = self.log_file_writer
+        log_file_path = self.log_file_path
         # Trial copies use their own log path; drop the parent file logger first
         if os.path.exists(self.log_file_path):
             os.remove(self.log_file_path)
@@ -370,13 +376,12 @@ class BaseRunner(ABC):
             ):
                 ht = fe_cfg.hyperparameter_tuning
                 ht_dict = ht.to_dict() if hasattr(ht, "to_dict") else dict(ht)
-                for k, v in suggest_params_from_dict(
-                    trial, ht_dict, f"fe_{fe_name}"
+                for key, value in suggest_params_from_dict(
+                    trial,
+                    ht_dict,
+                    f"architectures.feature_extractors_config.{fe_name}",
                 ).items():
-                    param_name = k.replace(f"fe_{fe_name}.", "")
-                    copy_runner.config.architectures.feature_extractors_config[fe_name][
-                        param_name
-                    ] = v
+                    set_nested(copy_runner.config, key, value)
             clf_cfg = copy_runner.config.architectures.classifiers_config[clf_name]
             if (
                 hasattr(clf_cfg, "hyperparameter_tuning")
@@ -384,13 +389,12 @@ class BaseRunner(ABC):
             ):
                 ht = clf_cfg.hyperparameter_tuning
                 ht_dict = ht.to_dict() if hasattr(ht, "to_dict") else dict(ht)
-                for k, v in suggest_params_from_dict(
-                    trial, ht_dict, f"clf_{clf_name}"
+                for key, value in suggest_params_from_dict(
+                    trial,
+                    ht_dict,
+                    f"architectures.classifiers_config.{clf_name}",
                 ).items():
-                    param_name = k.replace(f"clf_{clf_name}.", "")
-                    copy_runner.config.architectures.classifiers_config[clf_name][
-                        param_name
-                    ] = v
+                    set_nested(copy_runner.config, key, value)
 
             copy_runner._apply_extra_tuning_params(trial)
 
@@ -437,27 +441,32 @@ class BaseRunner(ABC):
                     trial.set_user_attr("repeated_trial", True)
                     with open(os.path.join(trial_folder, "params.json"), "w") as f:
                         json.dump(trial.params, f, indent=2)
-                    self._log_hparams_summary(
-                        trial_folder=trial_folder,
-                        hparams=trial.params,
-                        metrics={
-                            "hp_metric": t.user_attrs.get("mean_f1", float("nan")),
-                            "mean_val_f1": t.user_attrs.get("mean_f1", float("nan")),
-                            "std_val_f1": t.user_attrs.get("cv_std_f1", float("nan")),
-                            "mean_val_accuracy": t.user_attrs.get(
-                                "mean_accuracy", float("nan")
-                            ),
-                            "std_val_accuracy": t.user_attrs.get(
-                                "cv_std_accuracy", float("nan")
-                            ),
-                            "mean_val_loss": t.user_attrs.get(
-                                "mean_loss", float("nan")
-                            ),
-                            "std_val_loss": t.user_attrs.get(
-                                "cv_std_loss", float("nan")
-                            ),
-                        },
-                    )
+                    if self.config.general_config.system.tensorboard_log:
+                        self._log_hparams_summary(
+                            trial_folder=trial_folder,
+                            hparams=trial.params,
+                            metrics={
+                                "hp_metric": t.user_attrs.get("mean_f1", float("nan")),
+                                "mean_val_f1": t.user_attrs.get(
+                                    "mean_f1", float("nan")
+                                ),
+                                "std_val_f1": t.user_attrs.get(
+                                    "cv_std_f1", float("nan")
+                                ),
+                                "mean_val_accuracy": t.user_attrs.get(
+                                    "mean_accuracy", float("nan")
+                                ),
+                                "std_val_accuracy": t.user_attrs.get(
+                                    "cv_std_accuracy", float("nan")
+                                ),
+                                "mean_val_loss": t.user_attrs.get(
+                                    "mean_loss", float("nan")
+                                ),
+                                "std_val_loss": t.user_attrs.get(
+                                    "cv_std_loss", float("nan")
+                                ),
+                            },
+                        )
                     with open(
                         os.path.join(trial_folder, "cached_from_trial.txt"), "w"
                     ) as f:
@@ -498,19 +507,20 @@ class BaseRunner(ABC):
             ) ** 0.5
             trial.set_user_attr("cv_std_loss", cv_std)
             trial.set_user_attr("mean_loss", mean_loss)
-            self._log_hparams_summary(
-                trial_folder=trial_folder,
-                hparams=trial.params,
-                metrics={
-                    "hp_metric": mean_f1,
-                    "mean_val_f1": mean_f1,
-                    "std_val_f1": cv_std_f1,
-                    "mean_val_accuracy": mean_accuracy,
-                    "std_val_accuracy": cv_std_accuracy,
-                    "mean_val_loss": mean_loss,
-                    "std_val_loss": cv_std,
-                },
-            )
+            if self.config.general_config.system.tensorboard_log:
+                self._log_hparams_summary(
+                    trial_folder=trial_folder,
+                    hparams=trial.params,
+                    metrics={
+                        "hp_metric": mean_f1,
+                        "mean_val_f1": mean_f1,
+                        "std_val_f1": cv_std_f1,
+                        "mean_val_accuracy": mean_accuracy,
+                        "std_val_accuracy": cv_std_accuracy,
+                        "mean_val_loss": mean_loss,
+                        "std_val_loss": cv_std,
+                    },
+                )
             return mean_f1
 
         study = run_optuna_study(
@@ -525,6 +535,8 @@ class BaseRunner(ABC):
         for key, value in study.best_trial.params.items():
             set_nested(self.config, key, value)
 
+        self.log_file_writer = log_file_writer
+        self.log_file_path = log_file_path
         self.cross_validate()
 
     @abstractmethod
@@ -558,9 +570,7 @@ class BaseRunner(ABC):
         )
         logger.log_hyperparams(
             params={
-                key: value
-                if isinstance(value, (bool, int, float, str))
-                else str(value)
+                key: value if isinstance(value, (bool, int, float, str)) else str(value)
                 for key, value in hparams.items()
             },
             metrics={key: float(value) for key, value in metrics.items()},
@@ -704,7 +714,9 @@ class BaseRunner(ABC):
         # Progress bar
         if self.log_file_path is not None:
             setup_pytorch_lightning_logging(self.log_file_path)
-            callbacks.append(FileTQDMProgressBar(file_path=self.log_file_path, refresh_rate = 10))
+            callbacks.append(
+                FileTQDMProgressBar(file_path=self.log_file_path, refresh_rate=10)
+            )
         else:
             callbacks.append(RichProgressBar(leave=True))
 
@@ -724,11 +736,18 @@ class BaseRunner(ABC):
                 )
             )
 
-        logger = None
-        if tensorboard_log_name is not None:
-            os.makedirs(os.path.join(self.runs_folder, "tensorboard", tensorboard_log_name), exist_ok=True)
+        logger = False
+        if (
+            self.config.general_config.system.tensorboard_log
+            and tensorboard_log_name is not None
+        ):
+            os.makedirs(
+                os.path.join(self.runs_folder, "tensorboard", tensorboard_log_name),
+                exist_ok=True,
+            )
             logger = TensorBoardLogger(
-                save_dir=os.path.join(self.runs_folder, "tensorboard"), name=tensorboard_log_name
+                save_dir=os.path.join(self.runs_folder, "tensorboard"),
+                name=tensorboard_log_name,
             )
         return pl.Trainer(
             accelerator="gpu" if torch.cuda.is_available() else "cpu",
