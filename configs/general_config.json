@@ -16,7 +16,8 @@
         "normalize_std": [0.229, 0.224, 0.225],
         "use_extra_features": true,
         "extra_feature_dim": 2,
-        "number_of_augmentations": 3
+        "number_of_augmentations": 3,
+        "exclude_raw_images": false
     },
     "architecture": {
         "feature_extractor_name": "resnet18",
@@ -41,7 +42,7 @@
         "early_stop": 2,
         "early_stop_check_val_every_n_epoch": 5,
         "checkpoint_monitor": "val_f1",
-        "use_thresholding": true,
+        "use_thresholding": false,
         "threshold_min": 0,
         "threshold_max": 1,
         "threshold_steps": 5,

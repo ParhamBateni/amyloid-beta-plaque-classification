@@ -114,11 +114,20 @@ class SupervisedRunner(BaseRunner):
         )
         train_transforms = trf.Compose(
             [
+                trf.RandomResizedCrop(
+                    size=self.config.general_config.data.downscaled_image_size,
+                    scale=(0.08, 1.0),
+                    ratio=(3 / 4, 4 / 3),
+                ),
                 trf.RandomHorizontalFlip(p=0.5),
-                trf.RandomVerticalFlip(p=0.5),
-                trf.RandomRotation(degrees=(0, 90)),
-                trf.ColorJitter(brightness=0.2, contrast=0.2),
+                trf.RandAugment(num_ops=2, magnitude=9),
                 trf.ToTensor(),
+                # trf.RandomErasing(
+                #     p=0.25,
+                #     scale=(0.02, 0.2),
+                #     ratio=(0.3, 3.3),
+                #     value="random",
+                # ),
             ]
         )
         train_labeled_plaque_dataset = PlaqueDatasetAugmented(
@@ -127,6 +136,7 @@ class SupervisedRunner(BaseRunner):
             name_to_label=self.config.name_to_label,
             transforms=train_transforms,
             preload=self.config.general_config.data.preload,
+            apply_transforms_on_the_fly=self.config.general_config.data.apply_transforms_on_the_fly,
             description="train labeled plaque images",
             normalize_data=self.config.general_config.data.normalize_data,
             normalize_mean=self.config.general_config.data.normalize_mean,
@@ -135,6 +145,7 @@ class SupervisedRunner(BaseRunner):
             downscaled_image_size=self.config.general_config.data.downscaled_image_size,
             downscaling_method=self.config.general_config.data.downscaling_method,
             number_of_augmentations=self.config.general_config.data.number_of_augmentations,
+            exclude_raw_images=self.config.general_config.data.exclude_raw_images,
         )
         val_labeled_plaque_dataset = PlaqueDatasetAugmented(
             val_labeled_data_df,
@@ -142,6 +153,7 @@ class SupervisedRunner(BaseRunner):
             name_to_label=self.config.name_to_label,
             transforms=None,
             preload=self.config.general_config.data.preload,
+            apply_transforms_on_the_fly=self.config.general_config.data.apply_transforms_on_the_fly,
             description="val labeled plaque images",
             normalize_data=self.config.general_config.data.normalize_data,
             normalize_mean=self.config.general_config.data.normalize_mean,
@@ -157,6 +169,7 @@ class SupervisedRunner(BaseRunner):
             name_to_label=self.config.name_to_label,
             transforms=None,
             preload=self.config.general_config.data.preload,
+            apply_transforms_on_the_fly=self.config.general_config.data.apply_transforms_on_the_fly,
             description="test labeled plaque images",
             normalize_data=self.config.general_config.data.normalize_data,
             normalize_mean=self.config.general_config.data.normalize_mean,

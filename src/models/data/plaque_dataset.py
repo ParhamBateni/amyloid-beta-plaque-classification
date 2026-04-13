@@ -23,6 +23,7 @@ class PlaqueDatasetAugmented(torch.utils.data.Dataset):
         name_to_label: Dict[str, int] = {},
         transforms: Union[trf.Compose, List[trf.Compose]] = None,
         preload: bool = False,
+        apply_transforms_on_the_fly: bool = False,
         description: str = "Plaque images",
         normalize_data: bool = True,
         normalize_mean: Optional[torch.Tensor] = None,
@@ -31,6 +32,7 @@ class PlaqueDatasetAugmented(torch.utils.data.Dataset):
         downscaled_image_size: Tuple[int, int] = (224, 224),
         downscaling_method: str = "bilinear",
         number_of_augmentations: int = 1,
+        exclude_raw_images: bool = False,
     ):
         """
         1. Build ``number_of_augmentations`` dataset clones sharing the same transforms pipeline.
@@ -55,6 +57,7 @@ class PlaqueDatasetAugmented(torch.utils.data.Dataset):
         """
         self.transforms = transforms
         self.number_of_augmentations = number_of_augmentations
+        self.exclude_raw_images = exclude_raw_images
         self.plaque_datasets = [
             PlaqueDataset(
                 data_df=data_df,
@@ -62,7 +65,7 @@ class PlaqueDatasetAugmented(torch.utils.data.Dataset):
                 name_to_label=name_to_label,
                 transforms=transforms,
                 preload=preload,
-                apply_transforms_on_the_fly=False,
+                apply_transforms_on_the_fly=apply_transforms_on_the_fly,
                 description=description,
                 normalize_data=normalize_data,
                 normalize_mean=normalize_mean,
@@ -73,22 +76,23 @@ class PlaqueDatasetAugmented(torch.utils.data.Dataset):
             )
             for _ in range(number_of_augmentations)
         ]
-        self.plaque_datasets.append(
-            PlaqueDataset(
-                data_df=data_df,
-                data_folder_path=data_folder_path,
-                name_to_label=name_to_label,
-                transforms=trf.ToTensor(),
-                preload=preload,
-                apply_transforms_on_the_fly=False,
-                description=description,
-                normalize_data=normalize_data,
-                normalize_mean=normalize_mean,
-                normalize_std=normalize_std,
-                use_extra_features=use_extra_features,
-                downscaled_image_size=downscaled_image_size,
-                downscaling_method=downscaling_method,
-            )
+        if not exclude_raw_images:
+            self.plaque_datasets.append(
+                PlaqueDataset(
+                    data_df=data_df,
+                    data_folder_path=data_folder_path,
+                    name_to_label=name_to_label,
+                    transforms=trf.ToTensor(),
+                    preload=preload,
+                    apply_transforms_on_the_fly=apply_transforms_on_the_fly,
+                    description=description,
+                    normalize_data=normalize_data,
+                    normalize_mean=normalize_mean,
+                    normalize_std=normalize_std,
+                    use_extra_features=use_extra_features,
+                    downscaled_image_size=downscaled_image_size,
+                    downscaling_method=downscaling_method,
+                )
         )
 
     def __len__(self):
@@ -96,7 +100,7 @@ class PlaqueDatasetAugmented(torch.utils.data.Dataset):
         Returns:
             ``(number_of_augmentations + 1)`` times the length of one underlying dataset.
         """
-        return len(self.plaque_datasets[0]) * (self.number_of_augmentations + 1)
+        return len(self.plaque_datasets[0]) * (self.number_of_augmentations + (1 if not self.exclude_raw_images else 0))
 
     def __getitem__(self, idx: int):
         """

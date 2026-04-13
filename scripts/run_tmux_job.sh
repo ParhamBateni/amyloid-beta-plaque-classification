@@ -4,7 +4,7 @@
 SESSION_NAME="job_$(date +%Y%m%d_%H%M%S)"
 LOG_DIR="logs"
 SCRIPT="src/main.py"
-CONDA_ENV="/venv/pascal"
+CONDA_ENV="/venv/main"
 CONDA_SH="/opt/miniforge3/etc/profile.d/conda.sh"
 START_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 ENABLE_EMAIL=true

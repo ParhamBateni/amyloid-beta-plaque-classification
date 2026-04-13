@@ -29,6 +29,7 @@ h5py
 rich
 huggingface-hub
 timm
+dotenv
 
 # Hyperparameter tuning
 optuna

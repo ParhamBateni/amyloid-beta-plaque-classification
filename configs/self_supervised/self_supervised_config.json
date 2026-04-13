@@ -1,5 +1,5 @@
 {
-  "pretraining_method": "vae",
+  "pretraining_method": "simclr",
   "pretraining": {
     "skip_if_checkpoint_exists": false,
     "checkpoint_path": "checkpoints",
@@ -8,9 +8,8 @@
     "weight_decay": 1e-5
   },
   "hyperparameter_tuning": {
-    "pretraining_method": ["vae"],
+    "pretraining_method": ["simclr"],
     "pretraining": {
-      "skip_if_checkpoint_exists": [false],
       "num_epochs": [10, 25, 50],
       "learning_rate": [1e-5, 5e-5, 1e-4],
       "weight_decay": [1e-6, 1e-5]
