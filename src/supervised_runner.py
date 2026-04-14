@@ -20,7 +20,6 @@ from models.modules.supervised.lightning_supervised_module import (
     LightningSupervisedModule,
 )
 
-
 class SupervisedRunner(BaseRunner):
     """Runner for fully supervised plaque classification experiments."""
 
@@ -114,20 +113,11 @@ class SupervisedRunner(BaseRunner):
         )
         train_transforms = trf.Compose(
             [
-                trf.RandomResizedCrop(
-                    size=self.config.general_config.data.downscaled_image_size,
-                    scale=(0.08, 1.0),
-                    ratio=(3 / 4, 4 / 3),
-                ),
                 trf.RandomHorizontalFlip(p=0.5),
-                trf.RandAugment(num_ops=2, magnitude=9),
+                trf.RandomVerticalFlip(p=0.5),
+                trf.RandomRotation(degrees=90),
+                trf.ColorJitter(brightness=0.2, contrast=0.2),
                 trf.ToTensor(),
-                # trf.RandomErasing(
-                #     p=0.25,
-                #     scale=(0.02, 0.2),
-                #     ratio=(0.3, 3.3),
-                #     value="random",
-                # ),
             ]
         )
         train_labeled_plaque_dataset = PlaqueDatasetAugmented(

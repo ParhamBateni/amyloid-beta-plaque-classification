@@ -4,6 +4,7 @@
 /data/
 /logs/
 /runs/*
+/runs_old/*
 /best_results/*
 /garbage/
 /batch_scripts/*

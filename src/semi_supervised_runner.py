@@ -88,6 +88,7 @@ class SemiSupervisedRunner(BaseRunner):
             downscaled_image_size=self.config.general_config.data.downscaled_image_size,
             downscaling_method=self.config.general_config.data.downscaling_method,
             number_of_augmentations=self.config.general_config.data.number_of_augmentations,
+            exclude_raw_images=self.config.general_config.data.exclude_raw_images,
         )
 
         val_labeled_plaque_dataset = PlaqueDatasetAugmented(
