@@ -27,6 +27,7 @@ class H1OptimusFeatureExtractor(BaseFeatureExtractor):
         freeze: bool = False,
         unfreeze_last_n_blocks: int = 0,
         unfreeze_after_n_epochs: int = 0,
+        freeze_first_n_blocks: int = 0,
     ) -> None:
         """
         1. Call Hugging Face hub login (expects cached credentials or token).
@@ -47,6 +48,7 @@ class H1OptimusFeatureExtractor(BaseFeatureExtractor):
             freeze,
             unfreeze_last_n_blocks,
             unfreeze_after_n_epochs,
+            freeze_first_n_blocks,
         )
 
         login()

@@ -143,6 +143,7 @@ class LightningSupervisedModule(pl.LightningModule):
         """
         (
             _image_paths,
+            _is_transformed,
             normalized_transformed_images,
             extra_features,
             labels,
@@ -306,6 +307,7 @@ class LightningSupervisedModule(pl.LightningModule):
 
         (
             _image_paths,
+            _is_transformed,
             normalized_transformed_images,
             extra_features,
             _,

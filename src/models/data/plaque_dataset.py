@@ -118,8 +118,10 @@ class PlaqueDatasetAugmented(torch.utils.data.Dataset):
         image_path, _, normalized_transformed_image_tensors, extra_features, label = (
             self.plaque_datasets[dataset_idx][transform_idx]
         )
+        is_transformed = dataset_idx < self.number_of_augmentations
         return (
             image_path,
+            is_transformed,
             normalized_transformed_image_tensors[0],
             extra_features,
             label,

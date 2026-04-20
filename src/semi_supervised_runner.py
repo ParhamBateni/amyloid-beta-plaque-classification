@@ -1,7 +1,7 @@
 """Semi-supervised training: labeled + unlabeled data and FixMatch-style modules."""
 
 import os
-
+import shutil
 import numpy as np
 import optuna
 import pandas as pd
@@ -25,13 +25,75 @@ from utils.hyperparameter_tuning_utils import suggest_params_from_dict
 class SemiSupervisedRunner(BaseRunner):
     """Runner for semi-supervised learning experiments."""
 
-    def __init__(self, config: Config, run_mode: str) -> None:
+    def __init__(self, config: Config, run_mode: str, save_config: bool = False) -> None:
+        """
+        Args:
+            config: Loaded config (semi-supervised sections only).
+            run_mode: ``single``, ``cross_validate``, or ``hyperparameter_tuning``.
+            save_config: If True, save the config to the runs folder.
+        """
         super().__init__(config, run_mode)
 
-    def load_model_from_checkpoint(self, checkpoint_path: str, device: str = "cpu"):
-        """Load a semi-supervised model from checkpoint (not implemented yet)."""
-        # TODO: Implement when needed.
-        pass
+    def _load_model_from_checkpoint(self, checkpoint_path: str) -> BaseLightningSemiSupervisedModule:
+        """
+        Load a semi-supervised Lightning module from checkpoint (inference-oriented).
+
+        Args:
+            checkpoint_path: Path to the ``.ckpt`` file.
+
+        Returns:
+            Loaded ``BaseLightningSemiSupervisedModule`` in eval mode.
+        """
+        checkpoint = torch.load(checkpoint_path, map_location=self.config.general_config.system.device)
+
+        feature_extractor = self._create_feature_extractor_from_config()
+        classifier = self._create_classifier_from_config(
+            feature_extractor.output_size
+            + (
+                self.config.general_config.data.extra_feature_dim
+                if self.config.general_config.data.use_extra_features
+                else 0
+            )
+        )
+
+        criterion = nn.CrossEntropyLoss()
+        optimizer = self._create_base_optimizer()
+        optimizer_kwargs = self._get_base_optimizer_kwargs()
+
+        semi_supervised_config = self.config.semi_supervised.semi_supervised_config
+        kwargs = {}
+        if semi_supervised_config.model_name == "fixmatch":
+            kwargs["pseudo_label_confidence_threshold"] = (
+                self.config.semi_supervised.fixmatch_config.pseudo_label_confidence_threshold
+            )
+        elif semi_supervised_config.model_name == "mean_teacher":
+            kwargs["ema_decay"] = self.config.semi_supervised.mean_teacher_config.ema_decay
+            kwargs["inference_mode"] = True
+
+        model = BaseLightningSemiSupervisedModule.create_semi_supervised_module(
+            name=semi_supervised_config.model_name,
+            feature_extractor=feature_extractor,
+            classifier=classifier,
+            criterion=criterion,
+            optimizer=optimizer,
+            optimizer_kwargs=optimizer_kwargs,
+            use_extra_features=self.config.general_config.data.use_extra_features,
+            consistency_lambda_max=semi_supervised_config.training.consistency_lambda_max,
+            consistency_loss_type=semi_supervised_config.training.consistency_loss_type,
+            ramp_up_epochs=semi_supervised_config.training.ramp_up_epochs,
+            ramp_up_function=semi_supervised_config.training.ramp_up_function,
+            use_thresholding=self.config.general_config.training.use_thresholding,
+            threshold_min=self.config.general_config.training.threshold_min,
+            threshold_max=self.config.general_config.training.threshold_max,
+            threshold_steps=self.config.general_config.training.threshold_steps,
+            **kwargs,
+        )
+
+        model.load_state_dict(checkpoint["state_dict"])
+        model.eval()
+        model.to(self.config.general_config.system.device)
+
+        return model
 
     def _type(self) -> str:
         """Return model type string."""
@@ -312,6 +374,9 @@ class SemiSupervisedRunner(BaseRunner):
             unlabeled_plaque_dataloader=unlabeled_dataloader,
         )
         trainer.fit(pl_module, datamodule=data_module)
+        trainer._train_losses_history = pl_module.train_losses.copy()
+        trainer._train_accuracies_history = pl_module.train_accuracies.copy()
+        trainer._train_f1s_history = pl_module.train_f1s.copy()
         trainer._val_losses_history = pl_module.val_losses.copy()
         trainer._val_accuracies_history = pl_module.val_accuracies.copy()
         trainer._val_f1s_history = pl_module.val_f1s.copy()
@@ -374,6 +439,9 @@ class SemiSupervisedRunner(BaseRunner):
             )
 
             trainer = self._create_base_trainer(tensorboard_log_name=f"cv_{fold}")
+            # temporary enable debug mode to avoid saving the fold checkpoints
+            original_debug_mode = self.config.general_config.system.debug_mode
+            self.config.general_config.system.debug_mode = True
             test_labels, test_preds = self._run_single_experiment(
                 train_labeled_data_df=train_labeled_data_df,
                 val_labeled_data_df=val_labeled_data_df,
@@ -381,7 +449,9 @@ class SemiSupervisedRunner(BaseRunner):
                 unlabeled_data_df=self.unlabeled_data_df,
                 trainer=trainer,
             )
-
+            # reverting the debug mode to the original value
+            self.config.general_config.system.debug_mode = original_debug_mode
+            
             val_losses = trainer._val_losses_history
             # Track the best model across all folds
             if val_losses[-1] < best_val_loss:

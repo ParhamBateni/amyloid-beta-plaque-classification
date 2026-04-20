@@ -43,7 +43,7 @@ class MLPClassifier(BaseClassifier):
         in_dim = input_size
         for i in range(len(hidden_layers)):
             layers.append(nn.Linear(in_dim, hidden_layers[i]))
-            layers.append(nn.ReLU(inplace=True))
+            layers.append(nn.GELU())
             layers.append(nn.Dropout(dropout_rate))
             in_dim = hidden_layers[i]
         layers.append(nn.Linear(in_dim, output_size))

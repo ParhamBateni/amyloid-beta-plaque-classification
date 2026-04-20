@@ -134,7 +134,12 @@ class BaseLightningSelfSupervisedModule(pl.LightningModule, ABC):
 
     def configure_optimizers(self):
         """
-        Build the optimizer over all parameters of the module.
+        Build the optimizer over module parameters.
+
+        When the backbone uses ``freeze_first_n_blocks`` with
+        ``first_n_blocks_learning_rate`` set, uses two Adam-style groups: a lower LR
+        for parameters in the first ``n`` tracked trunk blocks and the main pretraining
+        ``lr`` for the rest (including heads and decoder).
 
         Returns:
             Optimizer instance for Lightning.

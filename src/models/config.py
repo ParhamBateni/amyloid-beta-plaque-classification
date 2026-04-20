@@ -64,10 +64,13 @@ class Config:
 
         # During object construction / copying, 'config' might not be set yet
         cfg = self.__dict__.get("_config", None)
-        if cfg is None or name not in cfg:
-            raise AttributeError(f"Config has no attribute {name}")
-
-        return cfg[name]
+        if cfg is not None:
+            if name in cfg:
+                return cfg[name]
+            elif hasattr(cfg, name):
+                return getattr(cfg, name)
+            else:
+                raise AttributeError(f"Config has no attribute {name}")
 
     def _indented_str(self, indent: int = 1) -> str:
         """
@@ -113,6 +116,7 @@ class Config:
             Stored value (possibly nested ``Config``).
         """
         return self._config[key]
+        
 
     def __setitem__(self, key: str, value: Any) -> None:
         """
@@ -137,6 +141,13 @@ class Config:
             del self._config[name]
         except Exception:
             pass
+
+    def __len__(self) -> int:
+        """
+        Returns:
+            Number of keys in ``self._config``.
+        """
+        return len(self._config)
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -168,10 +179,10 @@ class Config:
             if isinstance(value, Config):
                 value.remove_key_recursive(key_to_remove)
 
-    def save_config(self, folder_path: str) -> None:
+    def save_config(self, folder_path: str, config_name: str = "config.txt") -> None:
         """
-        1. Render this tree via :meth:`_indented_str`.
-        2. Write ``config.txt`` under ``folder_path``.
+        1. Serialize this tree as strict JSON via :meth:`to_dict`.
+        2. Write ``config_name`` file under ``folder_path``.
 
         Args:
             folder_path: Run or trial directory.
@@ -179,12 +190,35 @@ class Config:
         Returns:
             None.
         """
-        with open(
-            os.path.join(folder_path, "config.txt"),
-            "w",
-        ) as f:
-            config_str = self._indented_str()
-            f.write(config_str)
+        path = os.path.join(folder_path, config_name)
+        payload = self.to_dict()
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False, default=str)
+
+    @staticmethod
+    def from_txt(txt_path: str) -> "Config":
+        """
+        Load a config from ``config.txt`` (must be strict JSON).
+
+        Args:
+            txt_path: Path to ``config.txt``.
+
+        Returns:
+            Nested :class:`Config` built from the parsed JSON object.
+
+        Raises:
+            json.JSONDecodeError: If the file is not valid JSON (including legacy
+                pretty-print snapshots from before JSON ``config.txt`` writes).
+        """
+        with open(txt_path, "r", encoding="utf-8") as f:
+            config_str = f.read()
+        try:
+            return Config(json.loads(config_str))
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"Error loading config from {txt_path}"
+                f"Error message: {e}"
+            ) from e
 
     @staticmethod
     def load_config(config_dir: str, train_mode: str, run_mode: str) -> "Config":
@@ -315,24 +349,26 @@ class Config:
             config.remove_key_recursive("hyperparameter_tuning")
 
             # Drop unused architecture sections so invalid keys fail fast
+            fe_name = config.general_config.architecture.feature_extractor.name
+            clf_name = config.general_config.architecture.classifier.name
             feature_extractors_config = getattr(
                 config.architectures.feature_extractors_config,
-                config.general_config.architecture.feature_extractor_name,
+                fe_name,
             )
             classifiers_config = getattr(
                 config.architectures.classifiers_config,
-                config.general_config.architecture.classifier_name,
+                clf_name,
             )
             config.architectures.feature_extractors_config = Config({})
             config.architectures.classifiers_config = Config({})
             setattr(
                 config.architectures.feature_extractors_config,
-                config.general_config.architecture.feature_extractor_name,
+                fe_name,
                 feature_extractors_config,
             )
             setattr(
                 config.architectures.classifiers_config,
-                config.general_config.architecture.classifier_name,
+                clf_name,
                 classifiers_config,
             )
 
@@ -340,13 +376,13 @@ class Config:
             for fe in config.architectures.feature_extractors_config.to_dict():
                 if (
                     fe
-                    not in config.general_config.architecture.hyperparameter_tuning.feature_extractor_name
+                    not in getattr(config.general_config.hyperparameter_tuning.architecture, "feature_extractor_name", [])
                 ):
                     config.architectures.feature_extractors_config._config.pop(fe, None)
             for cl in config.architectures.classifiers_config.to_dict():
                 if (
                     cl
-                    not in config.general_config.architecture.hyperparameter_tuning.classifier_name
+                    not in getattr(config.general_config.hyperparameter_tuning.architecture, "classifier_name", [])
                 ):
                     config.architectures.classifiers_config._config.pop(cl, None)
 

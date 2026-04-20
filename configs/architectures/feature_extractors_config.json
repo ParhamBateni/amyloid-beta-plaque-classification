@@ -1,19 +1,13 @@
 {
     "simple_cnn": {
         "output_size": 64,
-        "freeze": false,
-        "unfreeze_after_n_epochs": 0,
-        "unfreeze_last_n_blocks": 0,
         "hyperparameter_tuning": {
             "output_size": [32, 64, 128]
         }
     },
     "resnet18": {
-        "output_size": 32,
+        "output_size": 64,
         "pretrained": true,
-        "freeze": false,
-        "unfreeze_after_n_epochs": 20,
-        "unfreeze_last_n_blocks": 1,
         "dropout_rate": 0.2,
         "hyperparameter_tuning": {
             "output_size": [32, 64, 128],
@@ -23,32 +17,19 @@
     "resnet34": {
         "output_size": 64,
         "pretrained": true,
-        "freeze": true,
-        "unfreeze_after_n_epochs": 20,
-        "unfreeze_last_n_blocks": 1,
         "dropout_rate": 0.2,
         "hyperparameter_tuning": {
             "output_size": [32, 64, 128],
-            "dropout_rate": [0.1, 0.2, 0.3],
-            "freeze": [true, false]
+            "dropout_rate": [0.1, 0.2, 0.3]
         }
     },
     "resnet50": {
         "output_size": 64,
         "pretrained": true,
-        "freeze": true,
-        "unfreeze_after_n_epochs": 20,
-        "unfreeze_last_n_blocks": 1,
         "dropout_rate": 0.2,
-
         "hyperparameter_tuning": {
             "output_size": [32, 64, 128],
-            "dropout_rate": [0.1, 0.2, 0.3],
-            "freeze": [true, false]
-        }
-    },
-    "h1_optimus": {
-        "hyperparameter_tuning": {
+            "dropout_rate": [0.1, 0.2, 0.3]
         }
     }
 }

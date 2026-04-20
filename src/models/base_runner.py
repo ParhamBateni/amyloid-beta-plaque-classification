@@ -2,7 +2,7 @@ import copy
 import json
 import os
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 import optuna
 import pandas as pd
@@ -18,6 +18,9 @@ from models.modules.architecture.classifiers.base_classifier import BaseClassifi
 from models.modules.architecture.feature_extractors.base_feature_extractor import (
     BaseFeatureExtractor,
 )
+from models.modules.self_supervised.base_lightning_self_supervised_module import BaseLightningSelfSupervisedModule
+from models.modules.supervised.lightning_supervised_module import LightningSupervisedModule
+from models.modules.semi_supervised.base_lightning_semi_supervised_module import BaseLightningSemiSupervisedModule
 from utils.data_utils import load_data_df
 from utils.hyperparameter_tuning_utils import (
     run_optuna_study,
@@ -29,11 +32,12 @@ from utils.logging_utils import (
     FileTQDMProgressBar,
     setup_pytorch_lightning_logging,
 )
-from utils.plotting_utils import plot_confusion_matrix
+from utils.plotting_utils import plot_confusion_matrix, plot_training_metrics
 from utils.report_utils import (
     aggregate_reports,
     generate_classification_report_df,
     save_classification_report,
+    save_training_metrics,
 )
 from utils.seed_utils import set_random_seeds
 
@@ -46,7 +50,7 @@ class BaseRunner(ABC):
     for mode-specific Optuna search spaces.
     """
 
-    def __init__(self, config: Config, run_mode: str) -> None:
+    def __init__(self, config: Config, run_mode: str, save_config: bool = False) -> None:
         """
         1. Apply optional global seeding and set matmul precision.
         2. Build ``runs_folder`` (mode- and job-specific), save ``config.txt``, load dataframes.
@@ -55,7 +59,7 @@ class BaseRunner(ABC):
         Args:
             config: Merged JSON config (includes ``run_id``, label maps, training knobs).
             run_mode: One of ``single``, ``cross_validate``, or ``hyperparameter_tuning``.
-
+            save_config: If True, save the config to the runs folder.
         Returns:
             None.
         """
@@ -86,13 +90,13 @@ class BaseRunner(ABC):
                 self.runs_folder = os.path.join(
                     self.runs_folder,
                     method,
-                    self.config.general_config.architecture.feature_extractor_name,
+                    self.config.general_config.architecture.feature_extractor.name,
                     config.run_id,
                 )
             else:
                 self.runs_folder = os.path.join(
                     self.runs_folder,
-                    self.config.general_config.architecture.feature_extractor_name,
+                    self.config.general_config.architecture.feature_extractor.name,
                     config.run_id,
                 )
         else:
@@ -110,22 +114,27 @@ class BaseRunner(ABC):
                 self.runs_folder = os.path.join(self.runs_folder, "mixed")
             if (
                 len(
-                    config.general_config.hyperparameter_tuning.architecture.feature_extractor_name
+                    config.general_config.hyperparameter_tuning.architecture.feature_extractor.name
                 )
                 == 1
             ):
                 # To make the runs folder unique for each feature extractor for hyperparameter tuning
                 self.runs_folder = os.path.join(
                     self.runs_folder,
-                    config.general_config.hyperparameter_tuning.architecture.feature_extractor_name[
+                    config.general_config.hyperparameter_tuning.architecture.feature_extractor.name[
                         0
                     ],
                 )
             else:
                 self.runs_folder = os.path.join(self.runs_folder, "mixed")
 
-        os.makedirs(self.runs_folder, exist_ok=True)
-        self.config.save_config(folder_path=self.runs_folder)
+        if save_config:
+            os.makedirs(self.runs_folder, exist_ok=True)
+            self.config.save_config(folder_path=self.runs_folder)
+            self.log_file_path = os.path.join(self.runs_folder, "full_training_output.log")
+            self.log_file_writer = AnsiStrippingFileRedirector(
+                self.log_file_path, redirect_to_stdout=True
+            )
 
         data_df_path = os.path.join(
             config.general_config.data.data_folder,
@@ -137,10 +146,7 @@ class BaseRunner(ABC):
             unlabeled_sample_size=config.general_config.data.unlabeled_sample_size,
             train_mode=self._type(),
         )
-        self.log_file_path = os.path.join(self.runs_folder, "full_training_output.log")
-        self.log_file_writer = AnsiStrippingFileRedirector(
-            self.log_file_path, redirect_to_stdout=True
-        )
+        
 
     @staticmethod
     def create_runner(train_mode: str, run_mode: str, config: Config) -> "BaseRunner":
@@ -162,17 +168,29 @@ class BaseRunner(ABC):
         if train_mode == "supervised":
             from supervised_runner import SupervisedRunner
 
-            return SupervisedRunner(config, run_mode)
+            return SupervisedRunner(config, run_mode, save_config = True)
         if train_mode == "semi_supervised":
             from semi_supervised_runner import SemiSupervisedRunner
 
-            return SemiSupervisedRunner(config, run_mode)
+            return SemiSupervisedRunner(config, run_mode, save_config = True)
         if train_mode == "self_supervised":
             from self_supervised_runner import SelfSupervisedRunner
 
-            return SelfSupervisedRunner(config, run_mode)
+            return SelfSupervisedRunner(config, run_mode, save_config = True)
 
         raise ValueError(f"Invalid train mode: {train_mode}")
+
+    def load_model_from_checkpoint(self, checkpoint_path: str) -> Union[LightningSupervisedModule, BaseLightningSemiSupervisedModule, BaseLightningSelfSupervisedModule]:
+        """
+        Load a model from a checkpoint.
+
+        Args:
+            checkpoint_path: Path to the ``.ckpt`` file.
+
+        Returns:
+            Loaded model in eval mode.
+        """
+        return self._load_model_from_checkpoint(checkpoint_path)
 
     def run_single_experiment(self) -> None:
         """
@@ -229,6 +247,24 @@ class BaseRunner(ABC):
                 finetuning_trainer=trainer,
             )
 
+        save_training_metrics(
+            train_losses=trainer._train_losses_history,
+            val_losses=trainer._val_losses_history,
+            train_f1s=trainer._train_f1s_history,
+            val_f1s=trainer._val_f1s_history,
+            train_accuracies=trainer._train_accuracies_history,
+            val_accuracies=trainer._val_accuracies_history,
+            folder_path=self.runs_folder,
+        )
+        plot_training_metrics(
+            train_losses=trainer._train_losses_history,
+            val_losses=trainer._val_losses_history,
+            train_f1s=trainer._train_f1s_history,
+            val_f1s=trainer._val_f1s_history,
+            train_accuracies=trainer._train_accuracies_history,
+            val_accuracies=trainer._val_accuracies_history,
+            folder_path=self.runs_folder,
+        )
         confusion_matrix = sklearn_confusion_matrix(
             test_labels, test_preds, labels=list(self.config.name_to_label.values())
         )
@@ -296,6 +332,17 @@ class BaseRunner(ABC):
         save_classification_report(
             aggregated_classification_reports_df, folder_path=self.runs_folder
         )
+        with open(os.path.join(self.runs_folder, "folds_test_f1_scores.txt"), "w") as f:
+            f.write("F1 Scores for each fold:\nMacro Average: [")
+            for classification_report_df in classification_reports_df:
+                f.write(f"{float(classification_report_df.loc['macro avg', 'f1-score'])}, ")
+            f.write("]\n")
+            f.write("F1 Scores for each fold:\nWeighted Average: [")
+            for classification_report_df in classification_reports_df:
+                f.write(
+                    f"{float(classification_report_df.loc['weighted avg', 'f1-score'])}, "
+                )
+            f.write("]\n")
 
     def hyperparameter_tuning(self, n_trials: int) -> None:
         """
@@ -365,10 +412,8 @@ class BaseRunner(ABC):
                 set_nested(copy_runner.config, key, value)
 
             # Per-architecture blocks in config.architectures.*
-            fe_name = (
-                copy_runner.config.general_config.architecture.feature_extractor_name
-            )
-            clf_name = copy_runner.config.general_config.architecture.classifier_name
+            fe_name = copy_runner.config.general_config.architecture.feature_extractor.name
+            clf_name = copy_runner.config.general_config.architecture.classifier.name
             fe_cfg = copy_runner.config.architectures.feature_extractors_config[fe_name]
             if (
                 hasattr(fe_cfg, "hyperparameter_tuning")
@@ -539,6 +584,28 @@ class BaseRunner(ABC):
         self.log_file_path = log_file_path
         self.cross_validate()
 
+    def load_dataloaders(self, train_labeled_data_df: pd.DataFrame, val_labeled_data_df: pd.DataFrame, test_labeled_data_df: pd.DataFrame, unlabeled_data_df: Optional[pd.DataFrame] = None) -> Tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader, torch.utils.data.DataLoader, Optional[torch.utils.data.DataLoader]]:
+        """
+        Load the dataloaders for the experiment.
+
+        Args:
+            train_labeled_data_df: Training rows (with ``Label``).
+            val_labeled_data_df: Validation rows.
+            test_labeled_data_df: Held-out test rows.
+            unlabeled_data_df: Unlabeled data rows.
+
+        Returns:
+            Tuple of dataloaders for the experiment.
+                train_labeled_dataloader: Training labeled dataloader.
+                val_labeled_dataloader: Validation labeled dataloader.
+                test_labeled_dataloader: Held-out test dataloader.
+                unlabeled_dataloader: Unlabeled dataloader.
+        """
+        if self._type() == 'supervised':
+            return self._load_dataloaders(train_labeled_data_df, val_labeled_data_df, test_labeled_data_df)
+        else:
+            return self._load_dataloaders(train_labeled_data_df, val_labeled_data_df, test_labeled_data_df, unlabeled_data_df)
+
     @abstractmethod
     def _apply_extra_tuning_params(self, trial: optuna.Trial) -> None:
         """
@@ -586,6 +653,22 @@ class BaseRunner(ABC):
         """
         Returns:
             Short runner tag used in paths and ``load_data_df`` (e.g. ``supervised``).
+        """
+        ...
+
+    @abstractmethod
+    def _load_dataloaders(self, train_labeled_data_df: pd.DataFrame, val_labeled_data_df: pd.DataFrame, test_labeled_data_df: pd.DataFrame, unlabeled_data_df: Optional[pd.DataFrame] = None) -> Tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader, torch.utils.data.DataLoader, Optional[torch.utils.data.DataLoader]]:
+        """
+        Load the dataloaders for the experiment.
+
+        Args:
+            train_labeled_data_df: Training rows (with ``Label``).
+            val_labeled_data_df: Validation rows.
+            test_labeled_data_df: Held-out test rows.
+            unlabeled_data_df: Unlabeled data rows.
+
+        Returns:
+            Tuple of dataloaders for the experiment.
         """
         ...
 
@@ -772,12 +855,14 @@ class BaseRunner(ABC):
             A ``BaseFeatureExtractor`` subclass instance with ``output_size`` set.
         """
         feature_extractor_config = self.config.architectures.feature_extractors_config[
-            self.config.general_config.architecture.feature_extractor_name
+            self.config.general_config.architecture.feature_extractor.name
         ]
+        general_feature_extractor_config = self.config.general_config.architecture.feature_extractor
+        feature_extractor_config = {**feature_extractor_config.to_dict(), **general_feature_extractor_config.to_dict()}
         return BaseFeatureExtractor.create_feature_extractor(
-            feature_extractor_name=self.config.general_config.architecture.feature_extractor_name,
+            feature_extractor_name=general_feature_extractor_config.name,
             input_dim=self.config.general_config.data.downscaled_image_size,
-            feature_extractor_config=feature_extractor_config.to_dict(),
+            feature_extractor_config=feature_extractor_config,
         )
 
     def _create_classifier_from_config(self, input_size: int) -> BaseClassifier:
@@ -791,11 +876,10 @@ class BaseRunner(ABC):
         Returns:
             A ``BaseClassifier`` subclass with ``output_size = num_classes``.
         """
-        classifier_config = self.config.architectures.classifiers_config[
-            self.config.general_config.architecture.classifier_name
-        ]
+        clf_name = self.config.general_config.architecture.classifier.name
+        classifier_config = self.config.architectures.classifiers_config[clf_name]
         return BaseClassifier.create_classifier(
-            classifier_name=self.config.general_config.architecture.classifier_name,
+            classifier_name=clf_name,
             input_size=input_size,
             output_size=len(self.config.label_to_name),
             classifier_config=classifier_config.to_dict(),

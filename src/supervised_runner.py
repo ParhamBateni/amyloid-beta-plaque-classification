@@ -1,7 +1,7 @@
 """Supervised-only training: labeled data, Lightning module, CV, and Optuna HPO."""
 
 import os
-
+import shutil
 import numpy as np
 import optuna
 import pandas as pd
@@ -23,27 +23,27 @@ from models.modules.supervised.lightning_supervised_module import (
 class SupervisedRunner(BaseRunner):
     """Runner for fully supervised plaque classification experiments."""
 
-    def __init__(self, config: Config, run_mode: str) -> None:
+    def __init__(self, config: Config, run_mode: str, save_config: bool = False) -> None:
         """
         Args:
             config: Loaded config (supervised sections only).
             run_mode: ``single``, ``cross_validate``, or ``hyperparameter_tuning``.
+            save_config: If True, save the config to the runs folder.
         """
-        super().__init__(config, run_mode)
+        super().__init__(config, run_mode, save_config)
 
-    def load_model_from_checkpoint(self, checkpoint_path: str, device: str = "cpu"):
+    def _load_model_from_checkpoint(self, checkpoint_path: str) -> LightningSupervisedModule:
         """
         Load a ``LightningSupervisedModule`` from a checkpoint (inference-oriented).
 
         Args:
             checkpoint_path: Path to the ``.ckpt`` file.
-            device: Target device.
 
         Returns:
-            Loaded module in eval mode.
+            Loaded ``LightningSupervisedModule`` in eval mode.
         """
         # Load checkpoint to get hyperparameters
-        checkpoint = torch.load(checkpoint_path, map_location=device)
+        checkpoint = torch.load(checkpoint_path, map_location=self.config.general_config.system.device)
 
         # Create feature extractor and classifier using parent methods
         feature_extractor = self._create_feature_extractor_from_config()
@@ -74,15 +74,7 @@ class SupervisedRunner(BaseRunner):
         # Load state dict
         model.load_state_dict(checkpoint["state_dict"])
         model.eval()
-        model.to(device)
-
-        print(f"Model loaded from: {checkpoint_path}")
-        print(f"Model type: {self._type()}")
-        print(
-            f"Feature extractor: {self.config.general_config.architecture.feature_extractor_name}"
-        )
-        print(f"Classifier: {self.config.general_config.architecture.classifier_name}")
-        print(f"Device: {device}")
+        model.to(self.config.general_config.system.device)
 
         return model
 
@@ -266,6 +258,9 @@ class SupervisedRunner(BaseRunner):
             test_labeled_plaque_dataloader=test_labeled_dataloader,
         )
         trainer.fit(pl_module, datamodule=data_module)
+        trainer._train_losses_history = pl_module.train_losses.copy()
+        trainer._train_accuracies_history = pl_module.train_accuracies.copy()
+        trainer._train_f1s_history = pl_module.train_f1s.copy()
         trainer._val_losses_history = pl_module.val_losses.copy()
         trainer._val_accuracies_history = pl_module.val_accuracies.copy()
         trainer._val_f1s_history = pl_module.val_f1s.copy()
@@ -327,12 +322,17 @@ class SupervisedRunner(BaseRunner):
                 random_state=self.config.general_config.system.random_seed,
             )
             trainer = self._create_base_trainer(tensorboard_log_name=f"cv_{fold}")
+            # temporary enable debug mode to avoid saving the fold checkpoints
+            original_debug_mode = self.config.general_config.system.debug_mode
+            self.config.general_config.system.debug_mode = True
             test_labels, test_preds = self._run_single_experiment(
                 train_labeled_data_df=train_labeled_data_df,
                 val_labeled_data_df=val_labeled_data_df,
                 test_labeled_data_df=test_labeled_data_df,
                 trainer=trainer,
             )
+            # reverting the debug mode to the original value
+            self.config.general_config.system.debug_mode = original_debug_mode
 
             val_losses = trainer._val_losses_history
 

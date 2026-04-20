@@ -8,6 +8,7 @@
 /best_results/*
 /garbage/
 /batch_scripts/*
+/pretrained_feature_extractors/*
 
 __pycache__
 *.out

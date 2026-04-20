@@ -21,6 +21,7 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
         freeze: bool = False,
         unfreeze_last_n_blocks: int = 0,
         unfreeze_after_n_epochs: int = 0,
+        freeze_first_n_blocks: int = 0,
         model_name: str = "resnet18",
         pretrained: bool = True,
         dropout_rate: float = 0.2,
@@ -50,6 +51,7 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
             freeze,
             unfreeze_last_n_blocks,
             unfreeze_after_n_epochs,
+            freeze_first_n_blocks,
         )
         self.model_name = model_name
         self.pretrained = pretrained
@@ -59,18 +61,18 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
             weights = None
             if self.pretrained:
                 weights = models.get_model_weights(model_name).DEFAULT
-            self.resnet_model = getattr(models, model_name)(weights=weights)
+            resnet_model = getattr(models, model_name)(weights=weights)
         except AttributeError:
             raise ValueError(f"Unsupported ResNet model: {model_name}")
 
         # Remove the final classification layer
         self.feature_extractor = nn.Sequential(
-            *list(self.resnet_model.children())[:-1],  # up to avgpool
+            *list(resnet_model.children())[:-1],  # up to avgpool
             nn.Flatten(),  # [B, C, 1, 1] → [B, C]
         )
         self.linear = nn.Sequential(
-            nn.Linear(self.resnet_model.fc.in_features, self.output_size),
-            nn.ReLU(),  # non-linearity
+            nn.Linear(resnet_model.fc.in_features, self.output_size),
+            nn.GELU(),  # non-linearity
             nn.Dropout(p=dropout_rate),  # regularization before passing to classifier
         )
         self.post_init()

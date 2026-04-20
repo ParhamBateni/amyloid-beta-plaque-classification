@@ -5,26 +5,41 @@
         "labeled_data_folder": "labeled_images",
         "unlabeled_data_folder": "sampled_unlabeled_images",
         "runs_folder": "runs",
-        "downscaled_image_size": [224, 224],
+        "downscaled_image_size": [
+            224,
+            224
+        ],
         "downscaling_method": "bilinear",
         "unlabeled_sample_size": 10000,
         "labeled_sample_size": 1e9,
         "preload": false,
         "apply_transforms_on_the_fly": false,
         "normalize_data": true,
-        "normalize_mean": [0.485, 0.456, 0.406],
-        "normalize_std": [0.229, 0.224, 0.225],
-        "use_extra_features": true,
+        "normalize_mean": [
+            0.485,
+            0.456,
+            0.406
+        ],
+        "normalize_std": [
+            0.229,
+            0.224,
+            0.225
+        ],
+        "use_extra_features": false,
         "extra_feature_dim": 2,
         "number_of_augmentations": 3,
         "exclude_raw_images": false
     },
     "architecture": {
-        "feature_extractor_name": "resnet18",
-        "classifier_name": "linear",
-        "hyperparameter_tuning": {
-            "feature_extractor_name": ["resnet18"],
-            "classifier_name": ["linear"]
+        "feature_extractor": {
+            "name": "resnet18",
+            "freeze": true,
+            "freeze_first_n_blocks": 10000,
+            "unfreeze_after_n_epochs": 20,
+            "unfreeze_last_n_blocks": 1
+        },
+        "classifier": {
+            "name": "linear"
         }
     },
     "training": {
@@ -33,12 +48,11 @@
         "num_workers": 4,
         "pin_memory": true,
         "persistent_workers": true,
-
-        "batch_size": 64,
+        "batch_size": 32,
         "num_epochs": 200,
         "optimizer": "adamw",
         "learning_rate": 1e-5,
-        "weight_decay": 1e-6,
+        "weight_decay": 1e-5,
         "early_stop": 2,
         "early_stop_check_val_every_n_epoch": 5,
         "checkpoint_monitor": "val_f1",
@@ -49,7 +63,7 @@
         "hyperparemeter_tuning_val_size": 0.2
     },
     "system": {
-        "debug_mode": true,
+        "debug_mode": false,
         "log_mode": true,
         "random_seed": 44,
         "seed_everything": true,
@@ -57,13 +71,27 @@
     },
     "hyperparameter_tuning": {
         "architecture": {
-            "feature_extractor_name": ["resnet18"],
-            "classifier_name": ["linear"]
+            "feature_extractor_name": [
+                "resnet18"
+            ],
+            "classifier_name": [
+                "linear"
+            ]
         },
         "training": {
-            "learning_rate": [1e-5, 5e-5, 1e-4],
-            "batch_size": [32, 64],
-            "weight_decay": [1e-5, 1e-4]
+            "learning_rate": [
+                1e-05,
+                5e-05,
+                1e-04
+            ],
+            "batch_size": [
+                64,
+                128
+            ],
+            "weight_decay": [
+                1e-05,
+                1e-04
+            ]
         }
     }
 }

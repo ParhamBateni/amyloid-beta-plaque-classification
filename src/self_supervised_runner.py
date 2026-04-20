@@ -2,6 +2,7 @@
 
 import copy
 import os
+import shutil
 from typing import Tuple
 
 import numpy as np
@@ -43,14 +44,58 @@ class SelfSupervisedRunner(BaseRunner):
       2) Train a classifier (e.g. MLP) on top of the pretrained backbone using labeled data.
     """
 
-    def __init__(self, config: Config, run_mode: str) -> None:
-        super().__init__(config, run_mode)
+    def __init__(self, config: Config, run_mode: str, save_config: bool = False) -> None:
+        """
+        Args:
+            config: Loaded config (self-supervised sections only).
+            run_mode: ``single``, ``cross_validate``, or ``hyperparameter_tuning``.
+            save_config: If True, save the config to the runs folder.
+        """
+        super().__init__(config, run_mode, save_config)
 
-    def load_model_from_checkpoint(
-        self, checkpoint_path: str, device: str = "cpu"
-    ) -> None:
-        """Load pretrained backbone + classifier (not implemented)."""
-        pass
+    def _load_model_from_checkpoint(
+        self, checkpoint_path: str) -> LightningSupervisedModule:
+        """
+        Load the finetuned supervised module from a self-supervised run checkpoint.
+
+        Args:
+            checkpoint_path: Path to the ``.ckpt`` file.
+
+        Returns:
+            Loaded ``LightningSupervisedModule`` in eval mode.
+        """
+        checkpoint = torch.load(checkpoint_path, map_location=self.config.general_config.system.device)
+
+        feature_extractor = self._create_feature_extractor_from_config()
+        classifier = self._create_classifier_from_config(
+            feature_extractor.output_size
+            + (
+                self.config.general_config.data.extra_feature_dim
+                if self.config.general_config.data.use_extra_features
+                else 0
+            )
+        )
+        criterion = nn.CrossEntropyLoss()
+        optimizer = self._create_base_optimizer()
+        optimizer_kwargs = self._get_base_optimizer_kwargs()
+
+        model = LightningSupervisedModule(
+            feature_extractor=feature_extractor,
+            classifier=classifier,
+            criterion=criterion,
+            optimizer=optimizer,
+            optimizer_kwargs=optimizer_kwargs,
+            use_extra_features=self.config.general_config.data.use_extra_features,
+            use_thresholding=self.config.general_config.training.use_thresholding,
+            threshold_min=self.config.general_config.training.threshold_min,
+            threshold_max=self.config.general_config.training.threshold_max,
+            threshold_steps=self.config.general_config.training.threshold_steps,
+        )
+        model.load_state_dict(checkpoint["state_dict"])
+        model.eval()
+        model.to(self.config.general_config.system.device)
+
+        return model
 
     def _type(self) -> str:
         """Return model type string used in run folder naming."""
@@ -149,6 +194,9 @@ class SelfSupervisedRunner(BaseRunner):
                 tensorboard_log_name=f"cv_{fold}"
             )
 
+            # temporary enable debug mode to avoid saving the fold checkpoints
+            original_debug_mode = self.config.general_config.system.debug_mode
+            self.config.general_config.system.debug_mode = True
             test_labels, test_preds = self._run_supervised_finetuning(
                 feature_extractor=pretrained_feature_extractor,
                 train_labeled_data_df=train_labeled_data_df,
@@ -156,7 +204,9 @@ class SelfSupervisedRunner(BaseRunner):
                 test_labeled_data_df=test_labeled_data_df,
                 finetuning_trainer=finetuning_trainer,
             )
-
+            # reverting the debug mode to the original value
+            self.config.general_config.system.debug_mode = original_debug_mode
+            
             val_losses = finetuning_trainer._val_losses_history
 
             # Track the best model across all folds based on final val loss
@@ -280,9 +330,20 @@ class SelfSupervisedRunner(BaseRunner):
             first three from :meth:`_load_labeled_dataloaders`, the last from
             :meth:`_load_unlabeled_dataloader`.
         """
-        return self._load_labeled_dataloaders(
+        (
+            train_labeled_dataloader,
+            val_labeled_dataloader,
+            test_labeled_dataloader,
+        ) = self._load_labeled_dataloaders(
             train_labeled_data_df, val_labeled_data_df, test_labeled_data_df
-        ), self._load_unlabeled_dataloader(unlabeled_data_df)
+        )
+        unlabeled_dataloader = self._load_unlabeled_dataloader(unlabeled_data_df)
+        return (
+            train_labeled_dataloader,
+            val_labeled_dataloader,
+            test_labeled_dataloader,
+            unlabeled_dataloader,
+        )
 
     def _load_labeled_dataloaders(
         self,
@@ -307,12 +368,12 @@ class SelfSupervisedRunner(BaseRunner):
             self.config.general_config.data.data_folder,
             self.config.general_config.data.labeled_data_folder,
         )
-        # Finetuning uses standard augmentations on labeled train only
+        # Finetuning uses standard augmentations on labeled train only same as supervised runner
         labeled_train_transforms = trf.Compose(
             [
                 trf.RandomHorizontalFlip(p=0.5),
                 trf.RandomVerticalFlip(p=0.5),
-                trf.RandomRotation(degrees=(0, 90)),
+                trf.RandomRotation(degrees=90),
                 trf.ColorJitter(brightness=0.2, contrast=0.2),
                 trf.ToTensor(),
             ]
@@ -412,7 +473,7 @@ class SelfSupervisedRunner(BaseRunner):
             [
                 trf.RandomResizedCrop(
                     size=self.config.general_config.data.downscaled_image_size,
-                    scale=(0.2, 1.0),
+                    scale=(0.6, 1.0),
                 ),
                 trf.RandomHorizontalFlip(p=0.5),
                 trf.RandomVerticalFlip(p=0.5),
@@ -433,7 +494,7 @@ class SelfSupervisedRunner(BaseRunner):
             [
                 trf.RandomResizedCrop(
                     size=self.config.general_config.data.downscaled_image_size,
-                    scale=(0.2, 1.0),
+                    scale=(0.6, 1.0),
                 ),
                 trf.RandomHorizontalFlip(p=0.5),
                 trf.RandomVerticalFlip(p=0.5),
@@ -499,80 +560,93 @@ class SelfSupervisedRunner(BaseRunner):
             loads ``state_dict`` into a freshly constructed backbone instead of training.
         """
         self_supervised_config = self.config.self_supervised.self_supervised_config
+        pretraining_cfg = self_supervised_config.pretraining
+        pretrained_model_folder = os.path.join(
+            pretraining_cfg.checkpoint_path,self_supervised_config.pretraining_method,self.config.general_config.architecture.feature_extractor.name
+        )
         pretrained_model_path = os.path.join(
-            self_supervised_config.pretraining.checkpoint_path,
-            f"pretrained_{self_supervised_config.pretraining_method}_{self.config.general_config.architecture.feature_extractor_name}.ckpt",
+            pretrained_model_folder,
+            f"pretrained.ckpt",
+        )
+        feature_extractor_config = (
+            self.config.architectures.feature_extractors_config[
+                self_supervised_config.pretraining.feature_extractor.name
+            ].to_dict()
+        )
+        pretraining_feature_extractor_config = self.config.self_supervised.self_supervised_config.pretraining.feature_extractor.to_dict()
+        merged_feature_extractor_config = {**feature_extractor_config, **pretraining_feature_extractor_config}
+        pretraining_feature_extractor = BaseFeatureExtractor.create_feature_extractor(
+            feature_extractor_name=self_supervised_config.pretraining.feature_extractor.name,
+            input_dim=self.config.general_config.data.downscaled_image_size,
+            feature_extractor_config=merged_feature_extractor_config,
         )
         if (
-            self_supervised_config.pretraining.skip_if_checkpoint_exists
+            pretraining_cfg.skip_if_checkpoint_exists
             and os.path.exists(pretrained_model_path)
         ):
+            print(f"Loading pretrained feature extractor from {pretrained_model_path}")
             checkpoint = torch.load(
                 pretrained_model_path,
                 map_location=self.config.general_config.system.device,
             )
-            feature_extractor_config = (
-                self.config.architectures.feature_extractors_config[
-                    self.config.general_config.architecture.feature_extractor_name
-                ].to_dict()
-            )
-            feature_extractor = BaseFeatureExtractor.create_feature_extractor(
-                feature_extractor_name=self.config.general_config.architecture.feature_extractor_name,
-                input_dim=self.config.general_config.data.downscaled_image_size,
-                feature_extractor_config=feature_extractor_config,
-            )
-            feature_extractor.load_state_dict(checkpoint["state_dict"])
-            feature_extractor.to(self.config.general_config.system.device)
-            return feature_extractor
+            # Support both Lightning checkpoints {"state_dict": ...} and raw state_dict files.
+            state_dict = checkpoint["state_dict"] if isinstance(checkpoint, dict) and "state_dict" in checkpoint else checkpoint
+            pretraining_feature_extractor.load_state_dict(state_dict)
 
-        unlabeled_dataloader = self._load_unlabeled_dataloader(unlabeled_data_df)
-        feature_extractor_config = self.config.architectures.feature_extractors_config[
-            self.config.general_config.architecture.feature_extractor_name
-        ].to_dict()
-        original_freeze_feature_extractor = feature_extractor_config["freeze"]
-        feature_extractor_config["freeze"] = False
-        feature_extractor = BaseFeatureExtractor.create_feature_extractor(
-            feature_extractor_name=self.config.general_config.architecture.feature_extractor_name,
+        else:
+            unlabeled_dataloader = self._load_unlabeled_dataloader(unlabeled_data_df)
+            kwargs = {}
+            if self_supervised_config.pretraining_method == "vae":
+                kwargs["latent_dim"] = self.config.self_supervised.vae_config.latent_dim
+                kwargs["beta"] = self.config.self_supervised.vae_config.beta
+                kwargs["reconstruction_loss"] = (
+                    self.config.self_supervised.vae_config.reconstruction_loss
+                )
+            elif self_supervised_config.pretraining_method == "simclr":
+                kwargs["temperature"] = (
+                    self.config.self_supervised.simclr_config.temperature
+                )
+                kwargs["projection_head_sizes"] = (
+                    self.config.self_supervised.simclr_config.projection_head_sizes
+                )
+                kwargs["projection_head_activation"] = (
+                    self.config.self_supervised.simclr_config.projection_head_activation
+                )
+
+            ssl_module = BaseLightningSelfSupervisedModule.create_self_supervised_module(
+                name=self_supervised_config.pretraining_method,
+                feature_extractor=pretraining_feature_extractor,
+                optimizer=self._create_base_optimizer(),
+                optimizer_kwargs={
+                    "lr": self_supervised_config.pretraining.learning_rate,
+                    "weight_decay": self_supervised_config.pretraining.weight_decay,
+                },
+                **kwargs,
+            )
+            data_module = SelfSupervisedPlaqueLightningDataModule(
+                unlabeled_plaque_dataloader=unlabeled_dataloader,
+            )
+            pretraining_trainer.fit(ssl_module, datamodule=data_module)
+            pretraining_feature_extractor = ssl_module.feature_extractor
+            if self_supervised_config.pretraining.save_checkpoint:
+                os.makedirs(pretrained_model_folder, exist_ok=True)
+                torch.save(pretraining_feature_extractor.state_dict(), pretrained_model_path)
+                self.config.save_config(folder_path=pretrained_model_folder)
+
+        fine_tuning_feature_extractor_config = self.config.general_config.architecture.feature_extractor.to_dict()
+        merged_fine_tuning_feature_extractor_config = {**fine_tuning_feature_extractor_config, **feature_extractor_config}
+        fine_tuning_feature_extractor = BaseFeatureExtractor.create_feature_extractor(
+            feature_extractor_name=self.config.general_config.architecture.feature_extractor.name,
             input_dim=self.config.general_config.data.downscaled_image_size,
-            feature_extractor_config=feature_extractor_config,
+            feature_extractor_config=merged_fine_tuning_feature_extractor_config,
         )
-        kwargs = {}
-        if self_supervised_config.pretraining_method == "vae":
-            kwargs["latent_dim"] = self.config.self_supervised.vae_config.latent_dim
-            kwargs["beta"] = self.config.self_supervised.vae_config.beta
-            kwargs["reconstruction_loss"] = (
-                self.config.self_supervised.vae_config.reconstruction_loss
-            )
-        elif self_supervised_config.pretraining_method == "simclr":
-            kwargs["temperature"] = (
-                self.config.self_supervised.simclr_config.temperature
-            )
-            kwargs["projection_head_sizes"] = (
-                self.config.self_supervised.simclr_config.projection_head_sizes
-            )
-            kwargs["projection_head_activation"] = (
-                self.config.self_supervised.simclr_config.projection_head_activation
-            )
+        # Copy pretrained backbone weights while retaining fine-tuning requires_grad settings.
+        fine_tuning_feature_extractor.feature_extractor.load_state_dict(
+            pretraining_feature_extractor.feature_extractor.state_dict()
+        )
 
-        ssl_module = BaseLightningSelfSupervisedModule.create_self_supervised_module(
-            name=self_supervised_config.pretraining_method,
-            feature_extractor=feature_extractor,
-            optimizer=self._create_base_optimizer(),
-            optimizer_kwargs={
-                "lr": self_supervised_config.pretraining.learning_rate,
-                "weight_decay": self_supervised_config.pretraining.weight_decay,
-            },
-            **kwargs,
-        )
-        data_module = SelfSupervisedPlaqueLightningDataModule(
-            unlabeled_plaque_dataloader=unlabeled_dataloader,
-        )
-        pretraining_trainer.fit(ssl_module, datamodule=data_module)
-        feature_extractor = ssl_module.feature_extractor
-        if original_freeze_feature_extractor:
-            feature_extractor.freeze_feature_extractor()
-        feature_extractor.to(self.config.general_config.system.device)
-        return feature_extractor
+        fine_tuning_feature_extractor.to(self.config.general_config.system.device)
+        return fine_tuning_feature_extractor
 
     def _run_supervised_finetuning(
         self,
@@ -648,6 +722,9 @@ class SelfSupervisedRunner(BaseRunner):
             test_labeled_plaque_dataloader=test_labeled_dataloader,
         )
         finetuning_trainer.fit(pl_module, datamodule=data_module)
+        finetuning_trainer._train_losses_history = pl_module.train_losses.copy()
+        finetuning_trainer._train_accuracies_history = pl_module.train_accuracies.copy()
+        finetuning_trainer._train_f1s_history = pl_module.train_f1s.copy()
         finetuning_trainer._val_losses_history = pl_module.val_losses.copy()
         finetuning_trainer._val_accuracies_history = pl_module.val_accuracies.copy()
         finetuning_trainer._val_f1s_history = pl_module.val_f1s.copy()

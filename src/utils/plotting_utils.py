@@ -8,64 +8,7 @@ from typing import Any, List
 import matplotlib.pyplot as plt
 import numpy as np
 
-
-def save_loss_and_accuracy(
-    train_losses: List[Any],
-    val_losses: List[Any],
-    train_f1s: List[Any],
-    val_f1s: List[Any],
-    train_accuracies: List[Any],
-    val_accuracies: List[Any],
-    folder_path: str,
-    name: str = "train_val_f1_training_report.txt",
-) -> None:
-    """
-    Save training metrics to a text file.
-
-    Args:
-        train_losses: List of training losses
-        val_losses: List of validation losses
-        train_f1s: List of training F1 scores
-        val_f1s: List of validation F1 scores
-        train_accuracies: List of training accuracies
-        val_accuracies: List of validation accuracies
-        folder_path: Path to save the report
-    """
-    averaged = False
-    if isinstance(train_losses[0], list):
-        train_losses = np.mean(np.array(train_losses), axis=0)
-        val_losses = np.mean(np.array(val_losses), axis=0)
-        train_f1s = np.mean(np.array(train_f1s), axis=0)
-        val_f1s = np.mean(np.array(val_f1s), axis=0)
-        train_accuracies = np.mean(np.array(train_accuracies), axis=0)
-        val_accuracies = np.mean(np.array(val_accuracies), axis=0)
-        averaged = True
-
-    # Convert all values to plain Python floats for clean output
-    def to_float_list(arr):
-        return [float(x) for x in arr]
-
-    train_losses_list = to_float_list(train_losses)
-    val_losses_list = to_float_list(val_losses)
-    train_accuracies_list = to_float_list(train_accuracies)
-    val_accuracies_list = to_float_list(val_accuracies)
-    train_f1s_list = to_float_list(train_f1s)
-    val_f1s_list = to_float_list(val_f1s)
-
-    with open(os.path.join(folder_path, name), "w") as f:
-        f.write(f"{'Averaged ' if averaged else ''}Train Losses: {train_losses_list}\n")
-        f.write(f"{'Averaged ' if averaged else ''}Val Losses: {val_losses_list}\n")
-        f.write(
-            f"{'Averaged ' if averaged else ''}Train Accuracies: {train_accuracies_list}\n"
-        )
-        f.write(
-            f"{'Averaged ' if averaged else ''}Val Accuracies: {val_accuracies_list}\n"
-        )
-        f.write(f"{'Averaged ' if averaged else ''}Train F1s: {train_f1s_list}\n")
-        f.write(f"{'Averaged ' if averaged else ''}Val F1s: {val_f1s_list}\n")
-
-
-def plot_loss_and_accuracy(
+def plot_training_metrics(
     train_losses: List[Any],
     val_losses: List[Any],
     train_f1s: List[Any],

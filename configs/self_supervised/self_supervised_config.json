@@ -1,18 +1,24 @@
 {
   "pretraining_method": "simclr",
   "pretraining": {
-    "skip_if_checkpoint_exists": false,
-    "checkpoint_path": "checkpoints",
+    "skip_if_checkpoint_exists": true,
+    "checkpoint_path": "pretrained_feature_extractors",
+    "save_checkpoint": true,
     "num_epochs": 50,
-    "learning_rate": 1e-5,
-    "weight_decay": 1e-5
+    "learning_rate": 1e-4,
+    "weight_decay": 1e-5,
+    "feature_extractor": {
+      "name": "resnet18",
+      "freeze": true,
+      "freeze_first_n_blocks": 2,
+      "unfreeze_after_n_epochs": 10000
+    }
   },
   "hyperparameter_tuning": {
-    "pretraining_method": ["simclr"],
     "pretraining": {
-      "num_epochs": [10, 25, 50],
+      "num_epochs": [100, 200],
       "learning_rate": [1e-5, 5e-5, 1e-4],
-      "weight_decay": [1e-6, 1e-5]
+      "weight_decay": [1e-5, 1e-4]
     }
   }
 }

@@ -18,7 +18,9 @@ class SimpleCNNFeatureExtractor(BaseFeatureExtractor):
         input_dim: int,
         output_size: int,
         freeze: bool = False,
+        unfreeze_last_n_blocks: int = 0,
         unfreeze_after_n_epochs: int = 0,
+        freeze_first_n_blocks: int = 0,
         **kwargs,
     ) -> None:
         """
@@ -36,7 +38,14 @@ class SimpleCNNFeatureExtractor(BaseFeatureExtractor):
         Returns:
             None.
         """
-        super().__init__(input_dim, output_size, freeze, unfreeze_after_n_epochs)
+        super().__init__(
+            input_dim,
+            output_size,
+            freeze=freeze,
+            unfreeze_last_n_blocks=unfreeze_last_n_blocks,
+            unfreeze_after_n_epochs=unfreeze_after_n_epochs,
+            freeze_first_n_blocks=freeze_first_n_blocks,
+        )
 
         self.feature_extractor = nn.Sequential(
             nn.Conv2d(3, 32, kernel_size=3, padding=1),  # Fewer output channels

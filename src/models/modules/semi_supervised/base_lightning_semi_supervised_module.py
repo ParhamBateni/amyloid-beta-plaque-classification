@@ -285,6 +285,7 @@ class BaseLightningSemiSupervisedModule(pl.LightningModule, ABC):
         """
         (
             _image_paths,
+            _is_transformed,
             normalized_transformed_image_tensors,
             extra_features,
             labels,
