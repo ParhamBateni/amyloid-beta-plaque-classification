@@ -282,6 +282,7 @@ class SupervisedRunner(BaseRunner):
             os.remove(checkpoint_path)
             os.removedirs(os.path.join(self.runs_folder, "checkpoints"))
 
+
         return pl_module.test_labels, pl_module.test_preds
 
     def _cross_validate(self):
@@ -292,7 +293,7 @@ class SupervisedRunner(BaseRunner):
             ``(kfold_test_labels, kfold_test_preds)`` — one list per fold.
 
         Side effects:
-            Saves ``best_model_cv.ckpt`` from the fold with lowest final val loss
+            Saves ``best_model.ckpt`` for the fold with lowest final val loss
             (unless ``debug_mode``).
         """
         kfold_test_labels = []
@@ -346,7 +347,7 @@ class SupervisedRunner(BaseRunner):
 
         if not self.config.general_config.system.debug_mode:
             checkpoint_path = os.path.join(
-                self.runs_folder, "checkpoints", "best_model_cv.ckpt"
+                self.runs_folder, "checkpoints", "best_model.ckpt"
             )
             best_trainer.save_checkpoint(checkpoint_path)
 
@@ -388,12 +389,18 @@ class SupervisedRunner(BaseRunner):
                 random_state=self.config.general_config.system.random_seed,
             )
             trainer = self._create_base_trainer(tensorboard_log_name=f"fold_{fold}")
+            # temporary enable debug mode to avoid saving the fold checkpoints
+            original_debug_mode = self.config.general_config.system.debug_mode
+            self.config.general_config.system.debug_mode = True
             self._run_single_experiment(
                 train_labeled_data_df=train_labeled_data_df,
                 val_labeled_data_df=val_labeled_data_df,
                 test_labeled_data_df=pd.DataFrame(),
                 trainer=trainer,
             )
+            # reverting the debug mode to the original value
+            self.config.general_config.system.debug_mode = original_debug_mode
+            
             val_f1s = trainer._val_f1s_history
             val_losses = trainer._val_losses_history
             val_accuracies = trainer._val_accuracies_history

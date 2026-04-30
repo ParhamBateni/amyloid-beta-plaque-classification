@@ -29,6 +29,8 @@ def save_training_metrics(
         val_accuracies: List of validation accuracies
         folder_path: Path to save the report
     """
+    if len(train_losses) == 0:
+        return
     averaged = False
     if isinstance(train_losses[0], list):
         train_losses = np.mean(np.array(train_losses), axis=0)

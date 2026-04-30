@@ -191,7 +191,7 @@ class SelfSupervisedRunner(BaseRunner):
             )
 
             finetuning_trainer = self._create_base_trainer(
-                tensorboard_log_name=f"cv_{fold}"
+                tensorboard_log_name=f"cv_{fold}",
             )
 
             # temporary enable debug mode to avoid saving the fold checkpoints
@@ -219,7 +219,7 @@ class SelfSupervisedRunner(BaseRunner):
 
         if not self.config.general_config.system.debug_mode:
             checkpoint_path = os.path.join(
-                self.runs_folder, "checkpoints", "best_model_cv.ckpt"
+                self.runs_folder, "checkpoints", "best_model.ckpt"
             )
             best_trainer.save_checkpoint(checkpoint_path)
 
@@ -274,6 +274,9 @@ class SelfSupervisedRunner(BaseRunner):
             finetuning_trainer = self._create_base_trainer(
                 tensorboard_log_name=f"fold_{fold}"
             )
+            # temporary enable debug mode to avoid saving the fold checkpoints
+            original_debug_mode = self.config.general_config.system.debug_mode
+            self.config.general_config.system.debug_mode = True
             self._run_supervised_finetuning(
                 feature_extractor=pretrained_feature_extractor,
                 train_labeled_data_df=train_labeled_data_df,
@@ -281,6 +284,9 @@ class SelfSupervisedRunner(BaseRunner):
                 test_labeled_data_df=pd.DataFrame(),
                 finetuning_trainer=finetuning_trainer,
             )
+            # reverting the debug mode to the original value
+            self.config.general_config.system.debug_mode = original_debug_mode
+            
             val_f1s = finetuning_trainer._val_f1s_history
             val_losses = finetuning_trainer._val_losses_history
             val_accuracies = finetuning_trainer._val_accuracies_history
@@ -469,48 +475,72 @@ class SelfSupervisedRunner(BaseRunner):
             with ``transforms=[view1, view2]``.
         """
         # Two independent strong pipelines (SimCLR-style multi-crop)
-        unlabeled_view_1_transforms = trf.Compose(
-            [
-                trf.RandomResizedCrop(
-                    size=self.config.general_config.data.downscaled_image_size,
-                    scale=(0.6, 1.0),
-                ),
-                trf.RandomHorizontalFlip(p=0.5),
-                trf.RandomVerticalFlip(p=0.5),
-                trf.RandomApply(
-                    [
-                        trf.ColorJitter(
-                            brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1
-                        )
-                    ],
-                    p=0.8,
-                ),
-                trf.RandomGrayscale(p=0.2),
-                trf.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
-                trf.ToTensor(),
-            ]
-        )
-        unlabeled_view_2_transforms = trf.Compose(
-            [
-                trf.RandomResizedCrop(
-                    size=self.config.general_config.data.downscaled_image_size,
-                    scale=(0.6, 1.0),
-                ),
-                trf.RandomHorizontalFlip(p=0.5),
-                trf.RandomVerticalFlip(p=0.5),
-                trf.RandomApply(
-                    [
-                        trf.ColorJitter(
-                            brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1
-                        )
-                    ],
-                    p=0.8,
-                ),
-                trf.RandomGrayscale(p=0.2),
-                trf.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
-                trf.ToTensor(),
-            ]
-        )
+        # unlabeled_view_1_transforms = trf.Compose(
+        #     [
+        #         trf.RandomResizedCrop(
+        #             size=self.config.general_config.data.downscaled_image_size,
+        #             scale=(0.6, 1.0),
+        #         ),
+        #         trf.RandomHorizontalFlip(p=0.5),
+        #         trf.RandomVerticalFlip(p=0.5),
+        #         trf.RandomApply(
+        #             [
+        #                 trf.ColorJitter(
+        #                     brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1
+        #                 )
+        #             ],
+        #             p=0.8,
+        #         ),
+        #         trf.RandomGrayscale(p=0.2),
+        #         trf.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
+        #         trf.ToTensor(),
+        #     ]
+        # )
+        # unlabeled_view_2_transforms = trf.Compose(
+        #     [
+        #         trf.RandomResizedCrop(
+        #             size=self.config.general_config.data.downscaled_image_size,
+        #             scale=(0.6, 1.0),
+        #         ),
+        #         trf.RandomHorizontalFlip(p=0.5),
+        #         trf.RandomVerticalFlip(p=0.5),
+        #         trf.RandomApply(
+        #             [
+        #                 trf.ColorJitter(
+        #                     brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1
+        #                 )
+        #             ],
+        #             p=0.8,
+        #         ),
+        #         trf.RandomGrayscale(p=0.2),
+        #         trf.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
+        #         trf.ToTensor(),
+        #     ]
+        # )
+        unlabeled_view_1_transforms = trf.Compose([
+            trf.RandomResizedCrop(
+                size=self.config.general_config.data.downscaled_image_size, 
+                scale=(0.8, 1.0)
+            ),
+            trf.RandomHorizontalFlip(p=0.5),
+            trf.RandomVerticalFlip(p=0.5),
+            
+            trf.RandomApply([
+                trf.ColorJitter(
+                    brightness=0.1,
+                    contrast=0.1,
+                    saturation=0.1,
+                    hue=0.02
+                )
+            ], p=0.3),
+
+            trf.RandomApply([
+                trf.GaussianBlur(kernel_size=3, sigma=(0.1, 0.5))
+            ], p=0.2),
+
+            trf.ToTensor(),
+        ])
+        unlabeled_view_2_transforms = copy.deepcopy(unlabeled_view_1_transforms)
         unlabeled_data_folder_path = os.path.join(
             self.config.general_config.data.data_folder,
             self.config.general_config.data.unlabeled_data_folder,
@@ -561,11 +591,8 @@ class SelfSupervisedRunner(BaseRunner):
         """
         self_supervised_config = self.config.self_supervised.self_supervised_config
         pretraining_cfg = self_supervised_config.pretraining
-        pretrained_model_folder = os.path.join(
-            pretraining_cfg.checkpoint_path,self_supervised_config.pretraining_method,self.config.general_config.architecture.feature_extractor.name
-        )
         pretrained_model_path = os.path.join(
-            pretrained_model_folder,
+            self_supervised_config.pretraining.checkpoint_folder,
             f"pretrained.ckpt",
         )
         feature_extractor_config = (
@@ -629,9 +656,9 @@ class SelfSupervisedRunner(BaseRunner):
             pretraining_trainer.fit(ssl_module, datamodule=data_module)
             pretraining_feature_extractor = ssl_module.feature_extractor
             if self_supervised_config.pretraining.save_checkpoint:
-                os.makedirs(pretrained_model_folder, exist_ok=True)
+                os.makedirs(self_supervised_config.pretraining.checkpoint_folder, exist_ok=True)
                 torch.save(pretraining_feature_extractor.state_dict(), pretrained_model_path)
-                self.config.save_config(folder_path=pretrained_model_folder)
+                self.config.save_config(folder_path=self_supervised_config.pretraining.checkpoint_folder)
 
         fine_tuning_feature_extractor_config = self.config.general_config.architecture.feature_extractor.to_dict()
         merged_fine_tuning_feature_extractor_config = {**fine_tuning_feature_extractor_config, **feature_extractor_config}

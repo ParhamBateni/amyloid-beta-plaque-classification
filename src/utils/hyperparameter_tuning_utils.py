@@ -52,16 +52,9 @@ def suggest_params_from_dict(
             continue
         full_key = f"{prefix}.{key}" if prefix else key
         if isinstance(value, dict):
-            if all(
-                isinstance(v, list) for v in value.values() if not isinstance(v, dict)
-            ):
-                for k, v in value.items():
-                    if isinstance(v, list):
-                        result[f"{full_key}.{k}"] = trial.suggest_categorical(
-                            f"{full_key}.{k}", v
-                        )
-            else:
-                result.update(suggest_params_from_dict(trial, value, full_key))
+            # Always recurse into nested dicts so deep keys like
+            # general_config.architecture.feature_extractor.* are discovered.
+            result.update(suggest_params_from_dict(trial, value, full_key))
         elif isinstance(value, list):
             result[full_key] = trial.suggest_categorical(full_key, value)
     return result

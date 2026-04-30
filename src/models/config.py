@@ -306,7 +306,11 @@ class Config:
             del config.supervised
             del config.self_supervised
             if run_mode == "hyperparameter_tuning":
-                selected_methods = config.semi_supervised.semi_supervised_config.hyperparameter_tuning.model_name
+                selected_methods = None
+                if hasattr(config.semi_supervised.semi_supervised_config.hyperparameter_tuning, "model_name"):
+                    selected_methods = config.semi_supervised.semi_supervised_config.hyperparameter_tuning.model_name
+                else:
+                    selected_methods = [config.semi_supervised.semi_supervised_config.model_name]
                 for method in list(config.semi_supervised._config.keys()):
                     if (
                         method != "semi_supervised_config"
@@ -327,7 +331,11 @@ class Config:
             del config.supervised
             del config.semi_supervised
             if run_mode == "hyperparameter_tuning":
-                selected_methods = config.self_supervised.self_supervised_config.hyperparameter_tuning.pretraining_method
+                selected_methods = None
+                if hasattr(config.self_supervised.self_supervised_config.hyperparameter_tuning, "pretraining_method"):
+                    selected_methods = config.self_supervised.self_supervised_config.hyperparameter_tuning.pretraining_method
+                else:
+                    selected_methods = [config.self_supervised.self_supervised_config.pretraining_method]
                 for method in list(config.self_supervised._config.keys()):
                     if (
                         method != "self_supervised_config"
@@ -373,18 +381,24 @@ class Config:
             )
 
         else:
-            for fe in config.architectures.feature_extractors_config.to_dict():
-                if (
-                    fe
-                    not in getattr(config.general_config.hyperparameter_tuning.architecture, "feature_extractor_name", [])
-                ):
-                    config.architectures.feature_extractors_config._config.pop(fe, None)
-            for cl in config.architectures.classifiers_config.to_dict():
-                if (
-                    cl
-                    not in getattr(config.general_config.hyperparameter_tuning.architecture, "classifier_name", [])
-                ):
-                    config.architectures.classifiers_config._config.pop(cl, None)
+            # Filter architecture pools only when an explicit non-empty allow-list
+            # is provided in general_config.hyperparameter_tuning.architecture.
+            ht_arch = getattr(config.general_config.hyperparameter_tuning, "architecture", None)
+            selected_fes = (
+                getattr(ht_arch, "feature_extractor_name", None) if ht_arch is not None else None
+            )
+            selected_cls = (
+                getattr(ht_arch, "classifier_name", None) if ht_arch is not None else None
+            )
+
+            if selected_fes:
+                for fe in list(config.architectures.feature_extractors_config.to_dict()):
+                    if fe not in selected_fes:
+                        config.architectures.feature_extractors_config._config.pop(fe, None)
+            if selected_cls:
+                for cl in list(config.architectures.classifiers_config.to_dict()):
+                    if cl not in selected_cls:
+                        config.architectures.classifiers_config._config.pop(cl, None)
 
         return config
 

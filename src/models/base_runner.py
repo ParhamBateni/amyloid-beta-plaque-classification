@@ -103,30 +103,42 @@ class BaseRunner(ABC):
             # HPO: shared base folder so Optuna SQLite and trials stay under one tree;
             # disambiguate by SSL method(s) and backbone name when multiple are configured.
             if isinstance(self, SemiSupervisedRunner):
-                methods = self.config.semi_supervised.semi_supervised_config.hyperparameter_tuning.model_name
+                if hasattr(self.config.semi_supervised.semi_supervised_config.hyperparameter_tuning, "model_name"):
+                    methods = self.config.semi_supervised.semi_supervised_config.hyperparameter_tuning.model_name
+                else:
+                    methods = [self.config.semi_supervised.semi_supervised_config.model_name]   
             elif isinstance(self, SelfSupervisedRunner):
-                methods = self.config.self_supervised.self_supervised_config.hyperparameter_tuning.pretraining_method
+                if hasattr(self.config.self_supervised.self_supervised_config.hyperparameter_tuning, "pretraining_method"):
+                    methods = self.config.self_supervised.self_supervised_config.hyperparameter_tuning.pretraining_method
+                else:
+                    methods = [self.config.self_supervised.self_supervised_config.pretraining_method]
             else:
                 methods = []
             if len(methods) == 1:
                 self.runs_folder = os.path.join(self.runs_folder, methods[0])
             elif len(methods) > 1:
                 self.runs_folder = os.path.join(self.runs_folder, "mixed")
-            if (
-                len(
-                    config.general_config.hyperparameter_tuning.architecture.feature_extractor.name
-                )
-                == 1
-            ):
-                # To make the runs folder unique for each feature extractor for hyperparameter tuning
+            if hasattr(config.general_config.hyperparameter_tuning.architecture.feature_extractor, "name"):
+                if (
+                    len(
+                        config.general_config.hyperparameter_tuning.architecture.feature_extractor.name
+                    )
+                    == 1
+                ):
+                    # To make the runs folder unique for each feature extractor for hyperparameter tuning
+                    self.runs_folder = os.path.join(
+                        self.runs_folder,
+                        config.general_config.hyperparameter_tuning.architecture.feature_extractor.name[
+                            0
+                        ],
+                    )
+                else:
+                    self.runs_folder = os.path.join(self.runs_folder, "mixed")
+            else:
                 self.runs_folder = os.path.join(
                     self.runs_folder,
-                    config.general_config.hyperparameter_tuning.architecture.feature_extractor.name[
-                        0
-                    ],
+                    config.general_config.architecture.feature_extractor.name,
                 )
-            else:
-                self.runs_folder = os.path.join(self.runs_folder, "mixed")
 
         if save_config:
             os.makedirs(self.runs_folder, exist_ok=True)

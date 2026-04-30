@@ -1,11 +1,11 @@
 {
   "pretraining_method": "simclr",
   "pretraining": {
-    "skip_if_checkpoint_exists": true,
-    "checkpoint_path": "pretrained_feature_extractors",
-    "save_checkpoint": true,
+    "skip_if_checkpoint_exists": false,
+    "checkpoint_folder": "pretrained_feature_extractors/simclr/resnet18_50e",
+    "save_checkpoint": false,
     "num_epochs": 50,
-    "learning_rate": 1e-4,
+    "learning_rate": 1e-5,
     "weight_decay": 1e-5,
     "feature_extractor": {
       "name": "resnet18",
@@ -16,9 +16,14 @@
   },
   "hyperparameter_tuning": {
     "pretraining": {
-      "num_epochs": [100, 200],
+      "num_epochs": [50, 100],
       "learning_rate": [1e-5, 5e-5, 1e-4],
-      "weight_decay": [1e-5, 1e-4]
+      "weight_decay": [1e-5, 1e-4],
+      "feature_extractor": {
+        "freeze": [true, false],
+        "unfreeze_after_n_epochs": [20, 50],
+        "unfreeze_last_n_blocks": [1, 2]
+      }
     }
   }
 }
