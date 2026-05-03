@@ -32,7 +32,7 @@ class SemiSupervisedRunner(BaseRunner):
             run_mode: ``single``, ``cross_validate``, or ``hyperparameter_tuning``.
             save_config: If True, save the config to the runs folder.
         """
-        super().__init__(config, run_mode)
+        super().__init__(config, run_mode, save_config)
 
     def _load_model_from_checkpoint(self, checkpoint_path: str) -> BaseLightningSemiSupervisedModule:
         """
@@ -408,7 +408,7 @@ class SemiSupervisedRunner(BaseRunner):
             ``(kfold_test_labels, kfold_test_preds)`` per fold.
 
         Side effects:
-            Saves ``best_model_cv.ckpt`` for the fold with lowest final val loss when not in debug.
+            Saves ``best_model.ckpt`` for the fold with lowest final val loss when not in debug.
         """
         kfold_test_labels = []
         kfold_test_preds = []
@@ -451,7 +451,7 @@ class SemiSupervisedRunner(BaseRunner):
             )
             # reverting the debug mode to the original value
             self.config.general_config.system.debug_mode = original_debug_mode
-            
+
             val_losses = trainer._val_losses_history
             # Track the best model across all folds
             if val_losses[-1] < best_val_loss:
@@ -463,7 +463,7 @@ class SemiSupervisedRunner(BaseRunner):
 
         if not self.config.general_config.system.debug_mode:
             checkpoint_path = os.path.join(
-                self.runs_folder, "checkpoints", "best_model_cv.ckpt"
+                self.runs_folder, "checkpoints", "best_model.ckpt"
             )
             best_trainer.save_checkpoint(checkpoint_path)
 
@@ -507,6 +507,9 @@ class SemiSupervisedRunner(BaseRunner):
             )
 
             trainer = self._create_base_trainer(tensorboard_log_name=f"fold_{fold}")
+            # temporary enable debug mode to avoid saving the fold checkpoints
+            original_debug_mode = self.config.general_config.system.debug_mode
+            self.config.general_config.system.debug_mode = True
             self._run_single_experiment(
                 train_labeled_data_df=train_labeled_data_df,
                 val_labeled_data_df=val_labeled_data_df,
@@ -514,6 +517,9 @@ class SemiSupervisedRunner(BaseRunner):
                 unlabeled_data_df=self.unlabeled_data_df,
                 trainer=trainer,
             )
+            # reverting the debug mode to the original value
+            self.config.general_config.system.debug_mode = original_debug_mode
+            
             val_f1s = trainer._val_f1s_history
             val_losses = trainer._val_losses_history
             val_accuracies = trainer._val_accuracies_history

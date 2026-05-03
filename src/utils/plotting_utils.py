@@ -31,6 +31,8 @@ def plot_training_metrics(
         folder_path: Path to save plots
         save: Whether to save plots to files
     """
+    if len(train_losses) == 0:
+        return
     averaged = False
     if isinstance(train_losses[0], list):
         train_losses = np.mean(np.array(train_losses), axis=0)
