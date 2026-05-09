@@ -66,6 +66,16 @@ class BaseRunner(ABC):
         self.config = config
         self.run_mode = run_mode
 
+        # Configs restored from historical run folders may persist "cuda" even when
+        # no CUDA GPU is currently available (e.g., local notebook inspection).
+        # Normalize runtime device early so checkpoint loading uses a valid target.
+        device = str(getattr(config.general_config.system, "device", "cpu"))
+        if device.startswith("cuda") and not torch.cuda.is_available():
+            if torch.backends.mps.is_available():
+                self.config.general_config.system.device = "mps"
+            else:
+                self.config.general_config.system.device = "cpu"
+
         # Reproducibility across Python, NumPy, Torch, Lightning
         if config.general_config.system.seed_everything:
             set_random_seeds(config.general_config.system.random_seed)
@@ -278,17 +288,17 @@ class BaseRunner(ABC):
             folder_path=self.runs_folder,
         )
         confusion_matrix = sklearn_confusion_matrix(
-            test_labels, test_preds, labels=list(self.config.name_to_label.values())
+            test_labels, test_preds, labels=list(self.config.label_to_name.keys())
         )
         plot_confusion_matrix(
             confusion_matrix,
-            self.config.name_to_label.keys(),
+            self.config.label_to_name.values(),
             folder_path=self.runs_folder,
             save=True,
         )
 
         classification_report_df = generate_classification_report_df(
-            test_labels, test_preds, self.config.name_to_label.keys()
+            test_labels, test_preds, self.config.label_to_name.values()
         )
         self.log_file_writer.write("Classification report:")
         self.log_file_writer.write(classification_report_df.to_string())
@@ -310,13 +320,13 @@ class BaseRunner(ABC):
         confusion_matrices = []
         for test_labels, test_preds in zip(kfold_test_labels, kfold_test_preds):
             confusion_matrix = sklearn_confusion_matrix(
-                test_labels, test_preds, labels=list(self.config.name_to_label.values())
+                test_labels, test_preds, labels=list(self.config.label_to_name.keys())
             )
             confusion_matrices.append(
                 pd.DataFrame(
                     confusion_matrix,
-                    index=self.config.name_to_label.keys(),
-                    columns=self.config.name_to_label.keys(),
+                    index=self.config.label_to_name.values(),
+                    columns=self.config.label_to_name.values(),
                 )
             )
         aggregated_confusion_matrix = aggregate_reports(
@@ -324,7 +334,7 @@ class BaseRunner(ABC):
         ).to_numpy()
         plot_confusion_matrix(
             aggregated_confusion_matrix,
-            self.config.name_to_label.keys(),
+            self.config.label_to_name.values(),
             folder_path=self.runs_folder,
             save=True,
         )
@@ -333,7 +343,7 @@ class BaseRunner(ABC):
         for test_labels, test_preds in zip(kfold_test_labels, kfold_test_preds):
             classification_reports_df.append(
                 generate_classification_report_df(
-                    test_labels, test_preds, self.config.name_to_label.keys()
+                    test_labels, test_preds, self.config.label_to_name.values()
                 )
             )
         aggregated_classification_reports_df = aggregate_reports(

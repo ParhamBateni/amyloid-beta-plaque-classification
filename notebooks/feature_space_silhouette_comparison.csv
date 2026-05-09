@@ -1,0 +1,7 @@
+model,silhouette_pca2,silhouette_all_dims,feature_dim
+Supervised,0.491,0.558,64
+Semi: Pi-Model,0.382,0.575,64
+Semi: Mean Teacher,0.441,0.636,128
+Semi: FixMatch,0.409,0.608,64
+Self: VAE,0.525,0.637,32
+Self: SimCLR,0.527,0.697,32

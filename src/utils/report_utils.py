@@ -88,12 +88,12 @@ def generate_classification_report_df(
     report = classification_report(
         all_labels,
         all_preds,
+        labels=list(range(len(label_names))),
         target_names=label_names,
         output_dict=True,
         digits=digits,
         zero_division=0,
     )
-    report.pop("accuracy")
     metrics = list(report[next(iter(report))].keys())
     rows = []
     for label in report:

@@ -32,7 +32,7 @@ def main() -> None:
     parser.add_argument(
         "--train_mode",
         type=str,
-        default="self_supervised",
+        default="supervised",
         choices=["supervised", "semi_supervised", "self_supervised"],
         help="Training paradigm",
     )
