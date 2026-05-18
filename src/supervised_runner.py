@@ -20,10 +20,13 @@ from models.modules.supervised.lightning_supervised_module import (
     LightningSupervisedModule,
 )
 
+
 class SupervisedRunner(BaseRunner):
     """Runner for fully supervised plaque classification experiments."""
 
-    def __init__(self, config: Config, run_mode: str, save_config: bool = False) -> None:
+    def __init__(
+        self, config: Config, run_mode: str, save_config: bool = False
+    ) -> None:
         """
         Args:
             config: Loaded config (supervised sections only).
@@ -32,7 +35,9 @@ class SupervisedRunner(BaseRunner):
         """
         super().__init__(config, run_mode, save_config)
 
-    def _load_model_from_checkpoint(self, checkpoint_path: str) -> LightningSupervisedModule:
+    def _load_model_from_checkpoint(
+        self, checkpoint_path: str
+    ) -> LightningSupervisedModule:
         """
         Load a ``LightningSupervisedModule`` from a checkpoint (inference-oriented).
 
@@ -43,7 +48,9 @@ class SupervisedRunner(BaseRunner):
             Loaded ``LightningSupervisedModule`` in eval mode.
         """
         # Load checkpoint to get hyperparameters
-        checkpoint = torch.load(checkpoint_path, map_location=self.config.general_config.system.device)
+        checkpoint = torch.load(
+            checkpoint_path, map_location=self.config.general_config.system.device
+        )
 
         # Create feature extractor and classifier using parent methods
         feature_extractor = self._create_feature_extractor_from_config()
@@ -282,7 +289,6 @@ class SupervisedRunner(BaseRunner):
             os.remove(checkpoint_path)
             os.removedirs(os.path.join(self.runs_folder, "checkpoints"))
 
-
         return pl_module.test_labels, pl_module.test_preds
 
     def _cross_validate(self):
@@ -400,7 +406,7 @@ class SupervisedRunner(BaseRunner):
             )
             # reverting the debug mode to the original value
             self.config.general_config.system.debug_mode = original_debug_mode
-            
+
             val_f1s = trainer._val_f1s_history
             val_losses = trainer._val_losses_history
             val_accuracies = trainer._val_accuracies_history

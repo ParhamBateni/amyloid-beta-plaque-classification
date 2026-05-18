@@ -72,8 +72,10 @@ class BaseFeatureExtractor(ABC, nn.Module):
             None.
         """
         if self.freeze:
-            if self.freeze_first_n_blocks<1:
-                raise ValueError("When freeze is True, freeze_first_n_blocks must be greater than 0")
+            if self.freeze_first_n_blocks < 1:
+                raise ValueError(
+                    "When freeze is True, freeze_first_n_blocks must be greater than 0"
+                )
             self.freeze_feature_extractor()
 
     def iter_tracked_backbone_blocks(self) -> Iterator[nn.Module]:
@@ -130,13 +132,17 @@ class BaseFeatureExtractor(ABC, nn.Module):
         blocks = self.get_tracked_backbone_block_list()
         return blocks[-n:]
 
-    def _set_first_n_blocks_requires_grad(self, number_of_blocks: int, requires_grad: bool) -> None:
+    def _set_first_n_blocks_requires_grad(
+        self, number_of_blocks: int, requires_grad: bool
+    ) -> None:
         self._set_tracked_modules_requires_grad(
             self._tracked_modules_first_n(number_of_blocks),
             requires_grad,
         )
 
-    def _set_last_n_blocks_requires_grad(self, number_of_blocks: int, requires_grad: bool) -> None:
+    def _set_last_n_blocks_requires_grad(
+        self, number_of_blocks: int, requires_grad: bool
+    ) -> None:
         self._set_tracked_modules_requires_grad(
             self._tracked_modules_last_n(number_of_blocks),
             requires_grad,
@@ -178,11 +184,17 @@ class BaseFeatureExtractor(ABC, nn.Module):
         Returns:
             None.
         """
-        print(f'Blocks to freeze: {self._tracked_modules_first_n(self.freeze_first_n_blocks)}')
-        num_trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        print(
+            f"Blocks to freeze: {self._tracked_modules_first_n(self.freeze_first_n_blocks)}"
+        )
+        num_trainable_params = sum(
+            p.numel() for p in self.parameters() if p.requires_grad
+        )
         self.frozen = True
         self._set_first_n_blocks_requires_grad(self.freeze_first_n_blocks, False)
-        print(f'Number of trainable parameters: before freezing: {num_trainable_params}, after freezing: {sum(p.numel() for p in self.parameters() if p.requires_grad)}')
+        print(
+            f"Number of trainable parameters: before freezing: {num_trainable_params}, after freezing: {sum(p.numel() for p in self.parameters() if p.requires_grad)}"
+        )
 
     def check_for_unfreezing(self, current_epoch: int) -> None:
         """
@@ -209,11 +221,17 @@ class BaseFeatureExtractor(ABC, nn.Module):
                 f"Unfreezing last {self.unfreeze_last_n_blocks} backbone blocks "
                 f"at epoch {current_epoch}"
             )
-            print(f'Blocks to unfreeze: {self._tracked_modules_last_n(self.unfreeze_last_n_blocks)}')
-            num_trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+            print(
+                f"Blocks to unfreeze: {self._tracked_modules_last_n(self.unfreeze_last_n_blocks)}"
+            )
+            num_trainable_params = sum(
+                p.numel() for p in self.parameters() if p.requires_grad
+            )
             self.frozen = False
             self._set_last_n_blocks_requires_grad(self.unfreeze_last_n_blocks, True)
-            print(f'Number of trainable parameters: before unfreezing: {num_trainable_params}, after unfreezing: {sum(p.numel() for p in self.parameters() if p.requires_grad)}')
+            print(
+                f"Number of trainable parameters: before unfreezing: {num_trainable_params}, after unfreezing: {sum(p.numel() for p in self.parameters() if p.requires_grad)}"
+            )
 
     @abstractmethod
     def forward(self, x_image: torch.Tensor) -> torch.Tensor:

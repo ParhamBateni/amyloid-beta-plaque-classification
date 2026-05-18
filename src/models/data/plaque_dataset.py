@@ -92,14 +92,16 @@ class PlaqueDatasetAugmented(torch.utils.data.Dataset):
                     downscaled_image_size=downscaled_image_size,
                     downscaling_method=downscaling_method,
                 )
-        )
+            )
 
     def __len__(self):
         """
         Returns:
             ``(number_of_augmentations + 1)`` times the length of one underlying dataset.
         """
-        return len(self.plaque_datasets[0]) * (self.number_of_augmentations + (1 if not self.exclude_raw_images else 0))
+        return len(self.plaque_datasets[0]) * (
+            self.number_of_augmentations + (1 if not self.exclude_raw_images else 0)
+        )
 
     def __getitem__(self, idx: int):
         """
@@ -262,9 +264,7 @@ class PlaqueDataset(torch.utils.data.Dataset):
             label,
         )
 
-    def _process_row(
-        self, idx: int, apply_transform: bool = True
-    ) -> Tuple[
+    def _process_row(self, idx: int, apply_transform: bool = True) -> Tuple[
         str,
         torch.Tensor,
         torch.Tensor,

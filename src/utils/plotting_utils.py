@@ -8,6 +8,8 @@ from typing import Any, List
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+
 def plot_training_metrics(
     train_losses: List[Any],
     val_losses: List[Any],
@@ -136,6 +138,8 @@ def plot_confusion_matrix(
         plt.savefig(
             os.path.join(folder_path, "confusion_matrix.png"), bbox_inches="tight"
         )
-        pd.DataFrame(confusion_matrix, index=label_names, columns=label_names).to_csv(os.path.join(folder_path, "confusion_matrix.csv"))
+        pd.DataFrame(confusion_matrix, index=label_names, columns=label_names).to_csv(
+            os.path.join(folder_path, "confusion_matrix.csv")
+        )
     plt.show()
     plt.close()

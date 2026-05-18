@@ -44,7 +44,9 @@ class SelfSupervisedRunner(BaseRunner):
       2) Train a classifier (e.g. MLP) on top of the pretrained backbone using labeled data.
     """
 
-    def __init__(self, config: Config, run_mode: str, save_config: bool = False) -> None:
+    def __init__(
+        self, config: Config, run_mode: str, save_config: bool = False
+    ) -> None:
         """
         Args:
             config: Loaded config (self-supervised sections only).
@@ -54,7 +56,8 @@ class SelfSupervisedRunner(BaseRunner):
         super().__init__(config, run_mode, save_config)
 
     def _load_model_from_checkpoint(
-        self, checkpoint_path: str) -> LightningSupervisedModule:
+        self, checkpoint_path: str
+    ) -> LightningSupervisedModule:
         """
         Load the finetuned supervised module from a self-supervised run checkpoint.
 
@@ -64,7 +67,9 @@ class SelfSupervisedRunner(BaseRunner):
         Returns:
             Loaded ``LightningSupervisedModule`` in eval mode.
         """
-        checkpoint = torch.load(checkpoint_path, map_location=self.config.general_config.system.device)
+        checkpoint = torch.load(
+            checkpoint_path, map_location=self.config.general_config.system.device
+        )
 
         feature_extractor = self._create_feature_extractor_from_config()
         classifier = self._create_classifier_from_config(
@@ -206,7 +211,7 @@ class SelfSupervisedRunner(BaseRunner):
             )
             # reverting the debug mode to the original value
             self.config.general_config.system.debug_mode = original_debug_mode
-            
+
             val_losses = finetuning_trainer._val_losses_history
 
             # Track the best model across all folds based on final val loss
@@ -286,7 +291,7 @@ class SelfSupervisedRunner(BaseRunner):
             )
             # reverting the debug mode to the original value
             self.config.general_config.system.debug_mode = original_debug_mode
-            
+
             val_f1s = finetuning_trainer._val_f1s_history
             val_losses = finetuning_trainer._val_losses_history
             val_accuracies = finetuning_trainer._val_accuracies_history
@@ -517,29 +522,28 @@ class SelfSupervisedRunner(BaseRunner):
         #         trf.ToTensor(),
         #     ]
         # )
-        unlabeled_view_1_transforms = trf.Compose([
-            trf.RandomResizedCrop(
-                size=self.config.general_config.data.downscaled_image_size, 
-                scale=(0.8, 1.0)
-            ),
-            trf.RandomHorizontalFlip(p=0.5),
-            trf.RandomVerticalFlip(p=0.5),
-            
-            trf.RandomApply([
-                trf.ColorJitter(
-                    brightness=0.1,
-                    contrast=0.1,
-                    saturation=0.1,
-                    hue=0.02
-                )
-            ], p=0.3),
-
-            trf.RandomApply([
-                trf.GaussianBlur(kernel_size=3, sigma=(0.1, 0.5))
-            ], p=0.2),
-
-            trf.ToTensor(),
-        ])
+        unlabeled_view_1_transforms = trf.Compose(
+            [
+                trf.RandomResizedCrop(
+                    size=self.config.general_config.data.downscaled_image_size,
+                    scale=(0.8, 1.0),
+                ),
+                trf.RandomHorizontalFlip(p=0.5),
+                trf.RandomVerticalFlip(p=0.5),
+                trf.RandomApply(
+                    [
+                        trf.ColorJitter(
+                            brightness=0.1, contrast=0.1, saturation=0.1, hue=0.02
+                        )
+                    ],
+                    p=0.3,
+                ),
+                trf.RandomApply(
+                    [trf.GaussianBlur(kernel_size=3, sigma=(0.1, 0.5))], p=0.2
+                ),
+                trf.ToTensor(),
+            ]
+        )
         unlabeled_view_2_transforms = copy.deepcopy(unlabeled_view_1_transforms)
         unlabeled_data_folder_path = os.path.join(
             self.config.general_config.data.data_folder,
@@ -595,21 +599,23 @@ class SelfSupervisedRunner(BaseRunner):
             self_supervised_config.pretraining.checkpoint_folder,
             f"pretrained.ckpt",
         )
-        feature_extractor_config = (
-            self.config.architectures.feature_extractors_config[
-                self_supervised_config.pretraining.feature_extractor.name
-            ].to_dict()
+        feature_extractor_config = self.config.architectures.feature_extractors_config[
+            self_supervised_config.pretraining.feature_extractor.name
+        ].to_dict()
+        pretraining_feature_extractor_config = (
+            self.config.self_supervised.self_supervised_config.pretraining.feature_extractor.to_dict()
         )
-        pretraining_feature_extractor_config = self.config.self_supervised.self_supervised_config.pretraining.feature_extractor.to_dict()
-        merged_feature_extractor_config = {**feature_extractor_config, **pretraining_feature_extractor_config}
+        merged_feature_extractor_config = {
+            **feature_extractor_config,
+            **pretraining_feature_extractor_config,
+        }
         pretraining_feature_extractor = BaseFeatureExtractor.create_feature_extractor(
             feature_extractor_name=self_supervised_config.pretraining.feature_extractor.name,
             input_dim=self.config.general_config.data.downscaled_image_size,
             feature_extractor_config=merged_feature_extractor_config,
         )
-        if (
-            pretraining_cfg.skip_if_checkpoint_exists
-            and os.path.exists(pretrained_model_path)
+        if pretraining_cfg.skip_if_checkpoint_exists and os.path.exists(
+            pretrained_model_path
         ):
             print(f"Loading pretrained feature extractor from {pretrained_model_path}")
             checkpoint = torch.load(
@@ -617,7 +623,11 @@ class SelfSupervisedRunner(BaseRunner):
                 map_location=self.config.general_config.system.device,
             )
             # Support both Lightning checkpoints {"state_dict": ...} and raw state_dict files.
-            state_dict = checkpoint["state_dict"] if isinstance(checkpoint, dict) and "state_dict" in checkpoint else checkpoint
+            state_dict = (
+                checkpoint["state_dict"]
+                if isinstance(checkpoint, dict) and "state_dict" in checkpoint
+                else checkpoint
+            )
             pretraining_feature_extractor.load_state_dict(state_dict)
 
         else:
@@ -640,15 +650,17 @@ class SelfSupervisedRunner(BaseRunner):
                     self.config.self_supervised.simclr_config.projection_head_activation
                 )
 
-            ssl_module = BaseLightningSelfSupervisedModule.create_self_supervised_module(
-                name=self_supervised_config.pretraining_method,
-                feature_extractor=pretraining_feature_extractor,
-                optimizer=self._create_base_optimizer(),
-                optimizer_kwargs={
-                    "lr": self_supervised_config.pretraining.learning_rate,
-                    "weight_decay": self_supervised_config.pretraining.weight_decay,
-                },
-                **kwargs,
+            ssl_module = (
+                BaseLightningSelfSupervisedModule.create_self_supervised_module(
+                    name=self_supervised_config.pretraining_method,
+                    feature_extractor=pretraining_feature_extractor,
+                    optimizer=self._create_base_optimizer(),
+                    optimizer_kwargs={
+                        "lr": self_supervised_config.pretraining.learning_rate,
+                        "weight_decay": self_supervised_config.pretraining.weight_decay,
+                    },
+                    **kwargs,
+                )
             )
             data_module = SelfSupervisedPlaqueLightningDataModule(
                 unlabeled_plaque_dataloader=unlabeled_dataloader,
@@ -656,12 +668,23 @@ class SelfSupervisedRunner(BaseRunner):
             pretraining_trainer.fit(ssl_module, datamodule=data_module)
             pretraining_feature_extractor = ssl_module.feature_extractor
             if self_supervised_config.pretraining.save_checkpoint:
-                os.makedirs(self_supervised_config.pretraining.checkpoint_folder, exist_ok=True)
-                torch.save(pretraining_feature_extractor.state_dict(), pretrained_model_path)
-                self.config.save_config(folder_path=self_supervised_config.pretraining.checkpoint_folder)
+                os.makedirs(
+                    self_supervised_config.pretraining.checkpoint_folder, exist_ok=True
+                )
+                torch.save(
+                    pretraining_feature_extractor.state_dict(), pretrained_model_path
+                )
+                self.config.save_config(
+                    folder_path=self_supervised_config.pretraining.checkpoint_folder
+                )
 
-        fine_tuning_feature_extractor_config = self.config.general_config.architecture.feature_extractor.to_dict()
-        merged_fine_tuning_feature_extractor_config = {**fine_tuning_feature_extractor_config, **feature_extractor_config}
+        fine_tuning_feature_extractor_config = (
+            self.config.general_config.architecture.feature_extractor.to_dict()
+        )
+        merged_fine_tuning_feature_extractor_config = {
+            **fine_tuning_feature_extractor_config,
+            **feature_extractor_config,
+        }
         fine_tuning_feature_extractor = BaseFeatureExtractor.create_feature_extractor(
             feature_extractor_name=self.config.general_config.architecture.feature_extractor.name,
             input_dim=self.config.general_config.data.downscaled_image_size,

@@ -14,11 +14,10 @@ scikit-learn
 # Visualization
 matplotlib
 tensorboard
-tensorflow
 
 # PyTorch Lightning ecosystem
 pytorch-lightning
-torchmetrics
+# torchmetrics
 
 # Utilities
 setuptools==80.0.0

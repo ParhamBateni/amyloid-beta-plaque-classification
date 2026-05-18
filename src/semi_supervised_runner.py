@@ -25,7 +25,9 @@ from utils.hyperparameter_tuning_utils import suggest_params_from_dict
 class SemiSupervisedRunner(BaseRunner):
     """Runner for semi-supervised learning experiments."""
 
-    def __init__(self, config: Config, run_mode: str, save_config: bool = False) -> None:
+    def __init__(
+        self, config: Config, run_mode: str, save_config: bool = False
+    ) -> None:
         """
         Args:
             config: Loaded config (semi-supervised sections only).
@@ -34,7 +36,9 @@ class SemiSupervisedRunner(BaseRunner):
         """
         super().__init__(config, run_mode, save_config)
 
-    def _load_model_from_checkpoint(self, checkpoint_path: str) -> BaseLightningSemiSupervisedModule:
+    def _load_model_from_checkpoint(
+        self, checkpoint_path: str
+    ) -> BaseLightningSemiSupervisedModule:
         """
         Load a semi-supervised Lightning module from checkpoint (inference-oriented).
 
@@ -44,7 +48,9 @@ class SemiSupervisedRunner(BaseRunner):
         Returns:
             Loaded ``BaseLightningSemiSupervisedModule`` in eval mode.
         """
-        checkpoint = torch.load(checkpoint_path, map_location=self.config.general_config.system.device)
+        checkpoint = torch.load(
+            checkpoint_path, map_location=self.config.general_config.system.device
+        )
 
         feature_extractor = self._create_feature_extractor_from_config()
         classifier = self._create_classifier_from_config(
@@ -67,7 +73,9 @@ class SemiSupervisedRunner(BaseRunner):
                 self.config.semi_supervised.fixmatch_config.pseudo_label_confidence_threshold
             )
         elif semi_supervised_config.model_name == "mean_teacher":
-            kwargs["ema_decay"] = self.config.semi_supervised.mean_teacher_config.ema_decay
+            kwargs["ema_decay"] = (
+                self.config.semi_supervised.mean_teacher_config.ema_decay
+            )
             kwargs["inference_mode"] = True
 
         model = BaseLightningSemiSupervisedModule.create_semi_supervised_module(
@@ -519,7 +527,7 @@ class SemiSupervisedRunner(BaseRunner):
             )
             # reverting the debug mode to the original value
             self.config.general_config.system.debug_mode = original_debug_mode
-            
+
             val_f1s = trainer._val_f1s_history
             val_losses = trainer._val_losses_history
             val_accuracies = trainer._val_accuracies_history
