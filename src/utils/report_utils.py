@@ -96,6 +96,8 @@ def generate_classification_report_df(
         digits=digits,
         zero_division=0,
     )
+    if "accuracy" in report:
+        del(report["accuracy"])
     metrics = list(report[next(iter(report))].keys())
     rows = []
     for label in report:

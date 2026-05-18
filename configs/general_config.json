@@ -33,7 +33,7 @@
     "architecture": {
         "feature_extractor": {
             "name": "resnet18",
-            "freeze": true,
+            "freeze": false,
             "freeze_first_n_blocks": 10000,
             "unfreeze_after_n_epochs": 20,
             "unfreeze_last_n_blocks": 1

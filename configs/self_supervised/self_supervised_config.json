@@ -9,7 +9,7 @@
     "weight_decay": 1e-5,
     "feature_extractor": {
       "name": "resnet18",
-      "freeze": true,
+      "freeze": false,
       "freeze_first_n_blocks": 2,
       "unfreeze_after_n_epochs": 10000
     }
